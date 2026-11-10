@@ -329,3 +329,21 @@ export const initialBoards: BoardType[] = [
 ];
 
 // Solo tipos y constantes, sin lógica de UI ni lógica de negocio
+
+/**
+ * Normaliza los nombres de atributos para los generadores de código:
+ * sin espacios y con minúscula inicial (Nombre -> nombre, "Fecha Nac" -> fechaNac).
+ * Así coinciden el campo Java, el JSON de la API, Postman y el modelo Flutter.
+ */
+export function normalizeAttributeNamesForCode(nodes: NodeType[]): NodeType[] {
+  return nodes.map(n => ({
+    ...n,
+    attributes: (n.attributes || []).map(a => {
+      const parts = a.name.trim().split(/[\s_-]+/).filter(Boolean);
+      const camel = parts
+        .map((p, i) => (i === 0 ? p : p.charAt(0).toUpperCase() + p.slice(1)))
+        .join('');
+      return { ...a, name: camel.charAt(0).toLowerCase() + camel.slice(1) };
+    }),
+  }));
+}

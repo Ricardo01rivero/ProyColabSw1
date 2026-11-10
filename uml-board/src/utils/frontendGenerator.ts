@@ -2,6 +2,7 @@
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import type { NodeType, EdgeType } from './umlConstants';
+import { normalizeAttributeNamesForCode } from './umlConstants';
 
 // Utilidades
 function capitalizeFirst(str: string): string {
@@ -2237,6 +2238,8 @@ lib/
 }
 
 export async function generarFrontend(nodes: NodeType[], edges: EdgeType[], boardName?: string) {
+  // Mismos nombres de atributos que el backend (Nombre -> nombre)
+  nodes = normalizeAttributeNamesForCode(nodes);
   console.log(`🚀 Generando Frontend Flutter${boardName ? ` para: ${boardName}` : ''}`);
   console.log(`📊 Entidades encontradas: ${nodes.length}`);
   console.log(`🔗 Relaciones encontradas: ${edges.length}`);

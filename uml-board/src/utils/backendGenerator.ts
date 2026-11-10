@@ -2,6 +2,7 @@ import { generatePostmanCollection } from './postmanGenerator';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import type { NodeType, EdgeType } from './umlConstants';
+import { normalizeAttributeNamesForCode } from './umlConstants';
 
 type ClassNode = NodeType;
 // type RelationEdge = EdgeType;
@@ -396,7 +397,7 @@ server.port=8080
 `;
   } else {
     return `# Configuración PostgreSQL con Docker
-spring.datasource.url=jdbc:postgresql://localhost:5432/demo
+spring.datasource.url=jdbc:postgresql://localhost:5433/demo
 spring.datasource.driver-class-name=org.postgresql.Driver
 spring.datasource.username=postgres
 spring.datasource.password=postgres
@@ -428,7 +429,7 @@ function generateDockerFiles(): { dockerCompose: string; dockerfile: string } {
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     ports:
-      - "5432:5432"
+      - "5433:5432"  # 5433 en tu PC (evita chocar con un PostgreSQL ya instalado)
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -530,7 +531,7 @@ Este proyecto usa PostgreSQL en Docker para un entorno de desarrollo completo.
 2. Abrir la carpeta en el IDE y ejecutar \`DemoApplication\` (o \`mvn spring-boot:run\`)
 
 ### 📊 Acceso a la Base de Datos:
-- **Host**: \`localhost:5432\`
+- **Host**: \`localhost:5433\`
 - **Base de Datos**: \`demo\`
 - **Usuario**: \`postgres\`
 - **Contraseña**: \`postgres\`
@@ -654,6 +655,8 @@ ${h2Dependency}${postgresqlDependency}
 }
 
 export async function generarBackend(nodes: NodeType[], edges: EdgeType[], boardName?: string) {
+  // Atributos con minúscula inicial (Nombre -> nombre) para que coincidan Java, JSON y Postman
+  nodes = normalizeAttributeNamesForCode(nodes);
   // Mostrar diálogo de selección
   const selectedOption = await showBackendOptionDialog();
   if (!selectedOption) {
@@ -695,9 +698,9 @@ export async function generarBackend(nodes: NodeType[], edges: EdgeType[], board
       `#!/bin/bash
 echo "🐘 Iniciando PostgreSQL con Docker..."
 docker-compose up -d postgres
-echo "✅ PostgreSQL iniciado en puerto 5432"
+echo "✅ PostgreSQL iniciado en puerto 5433"
 echo "📊 Credenciales:"
-echo "   Host: localhost:5432"
+echo "   Host: localhost:5433"
 echo "   Database: demo"
 echo "   User: postgres"
 echo "   Password: postgres"
