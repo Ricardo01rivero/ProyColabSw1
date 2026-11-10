@@ -739,6 +739,34 @@ public class DemoApplication {
 `.trim()
   );
 
+  // CORS: permite consumir la API desde Flutter Web u otro frontend en el navegador
+  zip.file(
+    'spring-crud/src/main/java/com/example/demo/config/WebConfig.java',
+    `
+package com.example.demo.config;
+
+import org.springframework.context.annotation.Configuration;
+import org.springframework.web.servlet.config.annotation.CorsRegistry;
+import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+
+/**
+ * CORS: permite que la app Flutter Web (u otro frontend en el navegador)
+ * consuma la API desde otro origen/puerto. Las apps móviles no lo necesitan.
+ */
+@Configuration
+public class WebConfig implements WebMvcConfigurer {
+
+    @Override
+    public void addCorsMappings(CorsRegistry registry) {
+        registry.addMapping("/**")
+                .allowedOriginPatterns("*")
+                .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
+                .allowedHeaders("*");
+    }
+}
+`.trim()
+  );
+
   // Errores de integridad (FK inexistente, duplicados) -> 409 con mensaje claro en vez de 500
   zip.file(
     'spring-crud/src/main/java/com/example/demo/controller/GlobalExceptionHandler.java',

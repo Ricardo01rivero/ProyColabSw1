@@ -190,6 +190,7 @@ dependencies:
     sdk: flutter
   cupertino_icons: ^1.0.2
   http: ^1.1.0
+  shared_preferences: ^2.2.0
 
 dev_dependencies:
   flutter_test:
@@ -220,8 +221,12 @@ function generateMainDart(classes: NodeType[]): string {
   return `import 'package:flutter/material.dart';
 ${imports}
 import 'widgets/app_drawer.dart';
+import 'config/api_config.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Carga la dirección del backend guardada en el dispositivo
+  await ApiConfig.load();
   runApp(const MyApp());
 }
 
@@ -2047,6 +2052,7 @@ function generateAppDrawer(classes: NodeType[]): string {
     .join('\n');
 
   return `import 'package:flutter/material.dart';
+import 'server_config_dialog.dart';
 
 class AppDrawer extends StatelessWidget {
   const AppDrawer({Key? key}) : super(key: key);
@@ -2079,6 +2085,16 @@ class AppDrawer extends StatelessWidget {
           ),
           const Divider(),
 ${drawerItems}
+          const Divider(),
+          ListTile(
+            leading: const Icon(Icons.settings_ethernet),
+            title: const Text('Servidor'),
+            subtitle: const Text('Dirección del backend'),
+            onTap: () {
+              Navigator.pop(context);
+              ServerConfigDialog.show(context);
+            },
+          ),
         ],
       ),
     );
@@ -2094,40 +2110,256 @@ function generateSidebar(classes: NodeType[]): string {
 
 // Genera archivo de configuración centralizada de API
 function generateApiConfig(): string {
-  return `class ApiConfig {
-  // 🔧 CONFIGURACIÓN DE LA API
-  // ===============================================
-  // Cambia esta URL según tu entorno:
-  
-  // Para emulador Android (desarrollo local):
-  // static const String baseUrl = 'http://localhost:8080';
-  
-  // Para dispositivo físico (cambia por tu IP local):
-  static const String baseUrl = 'http://192.168.0.11:8080';
-  
-  // Para producción:
-  // static const String baseUrl = 'https://tu-api-produccion.com';
-  
-  // ===============================================
-  
+  return `import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:shared_preferences/shared_preferences.dart';
+
+/// Configuración centralizada de la API (backend Spring Boot).
+///
+/// La dirección del servidor se puede cambiar DESDE LA APP (menú > Servidor)
+/// y queda guardada en el dispositivo. Así no hace falta recompilar cuando
+/// cambia la red (casa, universidad, etc.).
+///
+/// Orden de prioridad:
+///   1. La dirección guardada desde la pantalla "Servidor".
+///   2. --dart-define=API_URL=http://IP:8080 al compilar.
+///   3. Navegador: el mismo equipo desde donde se abrió la app (puerto 8080).
+///      Android: 10.0.2.2:8080 (el PC visto desde el emulador).
+class ApiConfig {
+  static const String _prefsKey = 'api_base_url';
+  static const String _defineUrl = String.fromEnvironment('API_URL');
+
+  static String _baseUrl = defaultUrl;
+
+  static String get baseUrl => _baseUrl;
+
+  static String get defaultUrl {
+    if (_defineUrl.isNotEmpty) return _defineUrl;
+    if (kIsWeb) {
+      final host = Uri.base.host.isEmpty ? 'localhost' : Uri.base.host;
+      return 'http://$host:8080';
+    }
+    return 'http://10.0.2.2:8080';
+  }
+
+  /// Carga la dirección guardada (llamar una vez al iniciar la app).
+  static Future<void> load() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _baseUrl = prefs.getString(_prefsKey) ?? defaultUrl;
+    } catch (_) {
+      _baseUrl = defaultUrl;
+    }
+  }
+
+  /// Guarda una nueva dirección (ej. http://192.168.1.20:8080).
+  static Future<void> save(String url) async {
+    var clean = url.trim();
+    if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
+      clean = 'http://$clean';
+    }
+    while (clean.endsWith('/')) {
+      clean = clean.substring(0, clean.length - 1);
+    }
+    _baseUrl = clean;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_prefsKey, clean);
+  }
+
   // Headers comunes para todas las peticiones
   static const Map<String, String> headers = {
     'Content-Type': 'application/json',
     'Accept': 'application/json',
   };
-  
-  // Timeout para las peticiones (en segundos)
-  static const Duration timeout = Duration(seconds: 30);
-  
-  // Método helper para construir URLs completas
-  static String endpoint(String path) {
-    return '\$baseUrl/\$path';
-  }
-  
-  // URLs específicas si necesitas customizar alguna
-  static String healthCheck() => '\$baseUrl/actuator/health';
-  static String swaggerUI() => '\$baseUrl/swagger-ui/html';
+
+  // Timeout para las peticiones
+  static const Duration timeout = Duration(seconds: 15);
+
+  // Construye la URL completa de un recurso
+  static String endpoint(String path) => '$_baseUrl/$path';
+
+  // Verificación de conexión: la documentación OpenAPI del backend siempre responde 200
+  static String healthCheck() => '$_baseUrl/v3/api-docs';
+
+  static String swaggerUI() => '$_baseUrl/swagger-ui/index.html';
 }
+`;
+}
+
+// Diálogo para cambiar la dirección del backend desde la app
+function generateServerConfigDialog(): string {
+  return `import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import '../config/api_config.dart';
+
+/// Diálogo para cambiar la dirección del backend desde la app.
+/// En el celular: escribe la IP del PC donde corre Spring Boot (ej. 192.168.1.20:8080).
+class ServerConfigDialog extends StatefulWidget {
+  const ServerConfigDialog({super.key});
+
+  static Future<void> show(BuildContext context) {
+    return showDialog(context: context, builder: (_) => const ServerConfigDialog());
+  }
+
+  @override
+  State<ServerConfigDialog> createState() => _ServerConfigDialogState();
+}
+
+class _ServerConfigDialogState extends State<ServerConfigDialog> {
+  late final TextEditingController _controller;
+  String? _status;
+  bool _ok = false;
+  bool _testing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: ApiConfig.baseUrl);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  String _normalized() {
+    var url = _controller.text.trim();
+    if (!url.startsWith('http://') && !url.startsWith('https://')) url = 'http://$url';
+    while (url.endsWith('/')) {
+      url = url.substring(0, url.length - 1);
+    }
+    return url;
+  }
+
+  Future<void> _test() async {
+    setState(() {
+      _testing = true;
+      _status = null;
+    });
+    try {
+      // Cualquier respuesta HTTP (aunque sea 404) significa que el servidor existe
+      final res = await http.get(Uri.parse(_normalized())).timeout(const Duration(seconds: 6));
+      setState(() {
+        _ok = true;
+        _status = '✅ Conectado (respuesta \${res.statusCode})';
+      });
+    } catch (e) {
+      setState(() {
+        _ok = false;
+        _status = '❌ No responde. Revisa la IP, que el backend esté corriendo '
+            'y que el celular esté en el mismo wifi.';
+      });
+    } finally {
+      if (mounted) setState(() => _testing = false);
+    }
+  }
+
+  Future<void> _save() async {
+    await ApiConfig.save(_controller.text);
+    if (!mounted) return;
+    Navigator.pop(context);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Servidor guardado: \${ApiConfig.baseUrl}')),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('⚙️ Servidor (backend)'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Dirección del backend Spring Boot.\\n'
+            'En el celular usa la IP del PC, por ejemplo:\\nhttp://192.168.1.20:8080',
+            style: TextStyle(fontSize: 13),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _controller,
+            keyboardType: TextInputType.url,
+            decoration: const InputDecoration(
+              border: OutlineInputBorder(),
+              labelText: 'URL del servidor',
+            ),
+          ),
+          if (_status != null) ...[
+            const SizedBox(height: 10),
+            Text(_status!, style: TextStyle(color: _ok ? Colors.green[700] : Colors.red[700])),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () async {
+            _controller.text = ApiConfig.defaultUrl;
+          },
+          child: const Text('Por defecto'),
+        ),
+        TextButton(
+          onPressed: _testing ? null : _test,
+          child: Text(_testing ? 'Probando…' : 'Probar'),
+        ),
+        FilledButton(onPressed: _save, child: const Text('Guardar')),
+      ],
+    );
+  }
+}
+`;
+}
+
+// AndroidManifest con permiso de internet y http:// permitido (flutter create no lo sobrescribe)
+function generateAndroidManifest(): string {
+  return `<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Acceso a internet/red local y conexiones http:// al backend en el PC -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <application
+        android:label="CRUD UML"
+        android:usesCleartextTraffic="true"
+        android:name="\${applicationName}"
+        android:icon="@mipmap/ic_launcher">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:theme="@style/LaunchTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize">
+            <!-- Specifies an Android theme to apply to this Activity as soon as
+                 the Android process has started. This theme is visible to the user
+                 while the Flutter UI initializes. After that, this theme continues
+                 to determine the Window background behind the Flutter UI. -->
+            <meta-data
+              android:name="io.flutter.embedding.android.NormalTheme"
+              android:resource="@style/NormalTheme"
+              />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+        <!-- Don't delete the meta-data below.
+             This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2" />
+    </application>
+    <!-- Required to query activities that can process text, see:
+         https://developer.android.com/training/package-visibility and
+         https://developer.android.com/reference/android/content/Intent#ACTION_PROCESS_TEXT.
+
+         In particular, this is used by the Flutter engine in io.flutter.plugin.text.ProcessTextPlugin. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.PROCESS_TEXT"/>
+            <data android:mimeType="text/plain"/>
+        </intent>
+    </queries>
+</manifest>
 `;
 }
 
@@ -2145,95 +2377,54 @@ linter:
 
 // Genera README.md
 function generateReadme(): string {
-  return `# Flutter CRUD Demo
+  return `# App Flutter CRUD (generada desde el diagrama UML)
 
-A Flutter CRUD project generated automatically from UML diagram.
+App móvil/web con pantallas para crear, ver, editar y eliminar cada entidad del diagrama.
+Consume la API REST del backend Spring Boot generado por el mismo sistema.
 
-## Features
+## Requisitos
+- Flutter 3.10 o superior
+- El backend Spring Boot corriendo (puerto 8080)
 
-- CRUD operations for each entity
-- Clean architecture with services and models
-- Material Design UI
-- Navigation drawer for easy access
-- Form validation
-- Centralized API configuration
-
-## Getting Started
-
-1. Ensure you have Flutter installed
-2. Run \`flutter create --platforms=android .\`
-3. Run \`flutter pub get\` to install dependencies
-4. **Configure API URL** (see below)
-5. Run \`flutter run\` to start the app
-
-## 🔧 API Configuration
-
-### Change API URL in ONE place:
-
-Edit \`lib/config/api_config.dart\`:
-
-\`\`\`dart
-class ApiConfig {
-  // 🔧 CHANGE THIS URL BASED ON YOUR ENVIRONMENT:
-  
-  // For Android emulator (local development):
-  static const String baseUrl = 'http://localhost:8080';
-  
-  // For physical device (change to your local IP):
-  // static const String baseUrl = 'http://192.168.1.100:8080';
-  
-  // For production:
-  // static const String baseUrl = 'https://your-api.com';
-}
-\`\`\`
-
-### Different Environments:
-
-- **Emulator**: Use \`http://localhost:8080\`
-- **Physical Device**: Use \`http://YOUR_COMPUTER_IP:8080\`
-- **Production**: Use your production URL
-
-### Find Your IP:
+## Primera vez
 \`\`\`bash
-# Linux/Mac:
-ip addr show | grep inet
-ifconfig | grep inet
-
-# Windows:
-ipconfig
+flutter create . --platforms android,web   # agrega las carpetas de Android y Web
+flutter pub get
 \`\`\`
 
-## Project Structure
+## Ejecutar en el navegador (Chrome / Edge)
+\`\`\`bash
+flutter run -d chrome
+\`\`\`
+La app usa automáticamente el backend del mismo equipo: \`http://localhost:8080\`.
 
+## Ejecutar en un celular Android (cable USB)
+1. En el celular: activar **Opciones de desarrollador** y **Depuración USB**.
+2. Conectar el cable y aceptar el aviso "¿Permitir depuración USB?".
+3. \`flutter devices\` debe mostrar el celular.
+4. \`flutter run\`
+5. En la app: **menú ☰ → Servidor** → escribir la IP del PC, por ejemplo \`http://192.168.1.20:8080\`
+   → **Probar** → **Guardar**. Queda guardada en el celular.
+
+El celular y el PC deben estar en la **misma red wifi**. La IP del PC se ve con \`ipconfig\`
+(Windows, "Dirección IPv4"). Si no conecta, permitir Java en el **Firewall de Windows** (redes privadas).
+
+## Configuración de la API
+Todo está en \`lib/config/api_config.dart\`. Prioridad:
+1. La dirección guardada desde la pantalla **Servidor** de la app.
+2. \`flutter run --dart-define=API_URL=http://IP:8080\`
+3. Navegador: el mismo equipo (puerto 8080). Emulador Android: \`http://10.0.2.2:8080\`.
+
+## Estructura
 \`\`\`
 lib/
 ├── main.dart
-├── config/
-│   └── api_config.dart  # 🔧 API Configuration (change URL here!)
-├── models/              # Data models for each entity
-├── services/            # API services for each entity
-├── screens/             # CRUD screens organized by entity
-└── widgets/             # Shared widgets (drawer, etc.)
+├── config/api_config.dart        # dirección del backend
+├── models/                       # un modelo por entidad
+├── services/                     # llamadas HTTP (GET, POST, PUT, DELETE)
+├── screens/                      # pantallas CRUD por entidad
+└── widgets/                      # menú lateral y diálogo "Servidor"
 \`\`\`
-
-## Backend Setup
-
-1. Start your Spring Boot backend:
-   \`\`\`bash
-   cd spring-crud/
-   ./mvnw spring-boot:run
-   \`\`\`
-
-2. Verify backend is running:
-   - Health: \`http://localhost:8080/actuator/health\`
-   - Swagger: \`http://localhost:8080/swagger-ui/html\`
-
-## Troubleshooting
-
-- **Connection errors**: Check \`api_config.dart\` URL
-- **Emulator issues**: Use \`localhost:8080\`
-- **Device issues**: Use your computer's IP address
-- **CORS errors**: Add CORS configuration to Spring Boot
 `;
 }
 
@@ -2310,6 +2501,10 @@ export async function generarFrontend(nodes: NodeType[], edges: EdgeType[], boar
   // Widgets compartidos
   widgetsFolder?.file('sidebar.dart', generateSidebar(classes));
   widgetsFolder?.file('app_drawer.dart', generateAppDrawer(classes));
+  widgetsFolder?.file('server_config_dialog.dart', generateServerConfigDialog());
+
+  // Android: permiso de internet y conexiones http:// al backend local
+  zip.file('flutter-mvp/android/app/src/main/AndroidManifest.xml', generateAndroidManifest());
 
   // Archivo de configuración centralizada
   const configFolder = libFolder?.folder('config');

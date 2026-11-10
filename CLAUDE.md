@@ -64,6 +64,22 @@ Probar cada etapa (la app Flutter con emulador/celular; el backend con Postman).
   GET al proxy lista modelos; `?model=` permite probar otro. El usuario despliega pegando el código en el Dashboard.
 - Voz: Web Speech API, solo Chrome/Edge (no en el navegador integrado de VS Code).
 - Se adelantó el paso 6 (2do parcial) antes de los pasos 2-5.
+- Paso 6 HECHO: chat compartido (tabla chat_messages, privados, adjuntos, presencia) + IA "dev senior".
+- Backend generado probado (10/11): Docker multi-etapa, FKs reales (@ManyToOne de solo lectura), 409 en FK
+  inválida, ddl update, PostgreSQL de Docker en puerto 5433 del PC (el usuario tiene PostgreSQL 18 local en 5432),
+  atributos normalizados a camelCase, CORS (WebConfig). Probado desde Antigravity IDE con JDK 17 (Temurin).
+- Flutter generado: pantalla "Servidor" para cambiar la IP del backend en la app (shared_preferences),
+  AndroidManifest con INTERNET + usesCleartextTraffic. Compila para web. Falta aceptar licencias Android
+  (`flutter doctor --android-licenses`, debe hacerlo el usuario) y probar en el Redmi Note 9S por USB.
+- Proyectos de prueba en `C:\Users\win10\Desktop\backend-demo\` (spring-crud y flutter\flutter-mvp).
+- Flutter en `C:\Programas\Herramientas\flutter`. IP del PC en su wifi: 192.168.1.9 (perfil Público, Java permitido).
+
+## Trabajo en equipo (ramas)
+- Compañera colaboradora: Cinthia (GitHub `Capi03`), trabaja en la rama `cinthia` (pasos 2 y 3: mover clases con IA,
+  vista ER + SQL, mejoras visuales). Ricardo trabaja en la rama `ricardo` (generadores, Flutter, offline = paso 4).
+- **Nunca unir a `main` sin orden explícita de Ricardo**, y él la da solo cuando Cinthia confirme que todo está OK.
+- Al unir: conservar el `currentUser.ts` de `ricardo` (nombre por pestaña con sessionStorage); la versión de
+  `cinthia` fue reescrita porque el archivo faltaba en el repo (lo excluía la regla `lib/` del .gitignore).
 
 ## Notas para Claude
 - Responder en español. No asumir pronombres del usuario.
