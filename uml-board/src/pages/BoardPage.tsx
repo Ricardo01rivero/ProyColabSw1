@@ -176,7 +176,11 @@ const BoardPage = ({ mode = 'host' }: { mode?: 'host' | 'guest' }) => {
 
   // Boards colaborativos desde Supabase
   const { boards, createBoard, deleteBoard, renameBoard } = useBoards();
-  const [currentBoardId, setCurrentBoardId] = useState<string>('1');
+  // La pizarra puede venir en el enlace (?board=<id>), así el invitado abre la misma que el anfitrión
+  const [currentBoardId, setCurrentBoardId] = useState<string>(() => {
+    const fromLink = new URLSearchParams(window.location.search).get('board');
+    return fromLink && /^[\w-]+$/.test(fromLink) ? fromLink : '1';
+  });
   const [showBoardMenu, setShowBoardMenu] = useState<boolean>(false);
   
   const currentBoard = boards.find(b => b.id === currentBoardId);
@@ -1244,9 +1248,9 @@ const BoardPage = ({ mode = 'host' }: { mode?: 'host' | 'guest' }) => {
             <>
               <button
                 onClick={() => {
-                  const guestUrl = `${window.location.origin}/board/guest`;
+                  const guestUrl = `${window.location.origin}/board/guest?board=${encodeURIComponent(currentBoardId)}`;
                   navigator.clipboard.writeText(guestUrl);
-                  alert('URL de invitado copiada al portapapeles');
+                  alert('Enlace de invitado copiado (abre esta pizarra): ' + guestUrl);
                 }}
                 style={{
                   ...buttonStyle,
