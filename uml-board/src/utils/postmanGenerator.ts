@@ -3,6 +3,7 @@
 // Uso: importar y llamar a generatePostmanCollection(classes)
 
 import type { NodeType, EdgeType } from './umlConstants';
+import { foreignKeysFor } from './fkRules';
 
 type ClassNode = NodeType;
 
@@ -24,45 +25,9 @@ function exampleValue(type: string): string | number | boolean {
   }
 }
 
-// Lógica similar a generateForeignKeyFields para deducir los nombres de los campos foráneos
+// Nombres de los campos foráneos (misma regla que el backend: ver fkRules.ts)
 function getForeignKeyFieldNames(cls: ClassNode, nodes: NodeType[], edges: EdgeType[]): string[] {
-  const result: string[] = [];
-  if (cls.asociativa && cls.relaciona) {
-    cls.relaciona.forEach(relId => {
-      const relClass = nodes.find(n => n.id === relId);
-      if (relClass) {
-        const fieldName = relClass.label.charAt(0).toLowerCase() + relClass.label.slice(1) + 'Id';
-        result.push(fieldName);
-      }
-    });
-    return result;
-  }
-  edges
-    .filter(r => r.tipo === 'herencia' && r.source === cls.id)
-    .forEach(rel => {
-      const parentClass = nodes.find(c => c.id === rel.target && !c.asociativa);
-      if (parentClass) {
-        const fieldName =
-          parentClass.label.charAt(0).toLowerCase() + parentClass.label.slice(1) + 'Id';
-        result.push(fieldName);
-      }
-    });
-  const incomingRelations = edges.filter(
-    r => r.target === cls.id && ['asociacion', 'agregacion', 'composicion'].includes(r.tipo)
-  );
-  const added = new Set<string>();
-  incomingRelations.forEach(rel => {
-    const originClass = nodes.find(c => c.id === rel.source && !c.asociativa);
-    if (originClass) {
-      const fieldName =
-        originClass.label.charAt(0).toLowerCase() + originClass.label.slice(1) + 'Id';
-      if (!added.has(fieldName)) {
-        result.push(fieldName);
-        added.add(fieldName);
-      }
-    }
-  });
-  return result;
+  return foreignKeysFor(cls, nodes, edges).map(fk => fk.fieldName);
 }
 
 export function generatePostmanCollection(

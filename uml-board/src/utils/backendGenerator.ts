@@ -3,6 +3,8 @@ import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import type { NodeType, EdgeType } from './umlConstants';
 import { normalizeAttributeNamesForCode } from './umlConstants';
+import { foreignKeysFor } from './fkRules';
+import { toSnake } from './erModel';
 
 type ClassNode = NodeType;
 // type RelationEdge = EdgeType;
@@ -24,11 +26,6 @@ function mapType(type: string): string {
   }
 }
 
-// Devuelve true si la clase ya tiene un atributo llamado 'id'
-function hasIdField(cls: ClassNode): boolean {
-  return (cls.attributes ?? []).some(a => a.name === 'id');
-}
-
 // Genera los campos de atributos simples (sin relaciones)
 function generateSimpleFields(cls: ClassNode): string {
   const attrs = cls.attributes ?? [];
@@ -47,12 +44,12 @@ function generateSimpleFields(cls: ClassNode): string {
 function generateFkField(fieldName: string, constraintName: string, targetLabel: string): string {
   const relationName = fieldName.replace(/Id$/, '') || targetLabel.charAt(0).toLowerCase() + targetLabel.slice(1);
   return [
-    `    @Column(name = "${fieldName}")`,
+    `    @Column(name = "${toSnake(fieldName)}")`,
     `    private Long ${fieldName};`,
     ``,
     `    // Relación solo para crear la clave foránea real en PostgreSQL (el JSON usa ${fieldName})`,
     `    @ManyToOne(fetch = FetchType.LAZY)`,
-    `    @JoinColumn(name = "${fieldName}", referencedColumnName = "id", insertable = false, updatable = false,`,
+    `    @JoinColumn(name = "${toSnake(fieldName)}", referencedColumnName = "id", insertable = false, updatable = false,`,
     `                foreignKey = @ForeignKey(name = "${constraintName}"))`,
     `    @OnDelete(action = OnDeleteAction.CASCADE)`,
     `    @JsonIgnore`,
@@ -64,70 +61,22 @@ function generateFkField(fieldName: string, constraintName: string, targetLabel:
 }
 
 function generateForeignKeyFields(cls: ClassNode, nodes: NodeType[], edges: EdgeType[]): string {
-  let result = '';
-  // Para clases asociativas, agregar foráneas a las dos clases relacionadas con CASCADE
-  if (cls.asociativa && cls.relaciona) {
-    console.log(`🔧 Procesando entidad asociativa: ${cls.label}`);
-    console.log(`   Relaciona: [${cls.relaciona.join(', ')}]`);
-
-    cls.relaciona.forEach(relId => {
-      // Buscar primero por ID, luego por nombre si no se encuentra
-      let relClass = nodes.find(n => n.id === relId);
-
-      // Si no se encuentra por ID, buscar por nombre (para entidades importadas)
-      if (!relClass) {
-        relClass = nodes.find(n => n.label === relId);
-      }
-
-      if (relClass) {
-        const fieldName = relClass.label.charAt(0).toLowerCase() + relClass.label.slice(1) + 'Id';
-        const constraintName = `FK_${cls.label.toUpperCase()}_${relClass.label.toUpperCase()}`;
-        console.log(`   ✅ Agregando FK: ${fieldName} → ${relClass.label}`);
-        result += generateFkField(fieldName, constraintName, relClass.label);
-      } else {
-        console.warn(`❌ No se encontró clase relacionada para ID/nombre: ${relId}`);
-      }
-    });
-    return result;
-  }
-  // Herencia: el campo foráneo va en la clase hija (origen), apuntando al padre (destino)
-  edges
-    .filter(r => r.tipo === 'herencia' && r.source === cls.id)
-    .forEach(rel => {
-      const parentClass = nodes.find(c => c.id === rel.target && !c.asociativa);
-      if (parentClass) {
-        const fieldName =
-          parentClass.label.charAt(0).toLowerCase() + parentClass.label.slice(1) + 'Id';
-        const constraintName = `FK_${cls.label.toUpperCase()}_${parentClass.label.toUpperCase()}`;
-        result += generateFkField(fieldName, constraintName, parentClass.label);
-      }
-    });
-  // Para otras relaciones, agregar foráneas por cada relación donde esta clase es destino
-  const incomingRelations = edges.filter(
-    r => r.target === cls.id && ['asociacion', 'agregacion', 'composicion'].includes(r.tipo)
-  );
-  // Evitar duplicados
-  const added = new Set<string>();
-  incomingRelations.forEach(rel => {
-    const originClass = nodes.find(c => c.id === rel.source && !c.asociativa);
-    if (originClass) {
-      const fieldName =
-        originClass.label.charAt(0).toLowerCase() + originClass.label.slice(1) + 'Id';
-      if (!added.has(fieldName)) {
-        const constraintName = `FK_${cls.label.toUpperCase()}_${originClass.label.toUpperCase()}`;
-        result += generateFkField(fieldName, constraintName, originClass.label);
-        added.add(fieldName);
-      }
-    }
-  });
-  return result;
+  // La clave foránea sigue la multiplicidad (ver fkRules.ts): va en el lado "muchos"
+  return foreignKeysFor(cls, nodes, edges)
+    .map(fk =>
+      generateFkField(
+        fk.fieldName,
+        `FK_${cls.label.toUpperCase()}_${fk.className.toUpperCase()}`,
+        fk.className
+      )
+    )
+    .join('');
 }
 
 function generateEntity(cls: ClassNode, nodes: NodeType[], edges: EdgeType[]): string {
-  const hasId = hasIdField(cls);
-  const idField = !hasId
-    ? `    @Id\n    @GeneratedValue(strategy = GenerationType.IDENTITY)\n    private Long id;\n`
-    : '';
+  // Siempre se genera la clave primaria `id` (si el diagrama ya trae un atributo `id`,
+  // generateSimpleFields lo omite para no duplicarlo; sin esto la entidad quedaba sin @Id).
+  const idField = `    @Id\n    @GeneratedValue(strategy = GenerationType.IDENTITY)\n    private Long id;\n`;
   const fields = generateSimpleFields(cls);
   const relationFields = generateForeignKeyFields(cls, nodes, edges);
 
@@ -145,7 +94,7 @@ import java.time.LocalDate;
 
 @Entity
 @Data
-@Table(name = "${cls.label.toLowerCase()}")
+@Table(name = "${toSnake(cls.label)}")
 public class ${cls.label} {
 
 ${idField}${fields ? fields + '\n' : ''}${relationFields}
@@ -411,7 +360,8 @@ spring.jpa.properties.hibernate.hbm2ddl.create_namespaces=true
 
 # IMPORTANTE: Habilitar foreign keys para CASCADE DELETE
 spring.jpa.properties.hibernate.globally_quoted_identifiers=true
-spring.jpa.properties.hibernate.physical_naming_strategy=org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl
+# Nombres de tablas y columnas en minúsculas con guion bajo (cliente_id, detalle_factura),
+# iguales a los del script SQL que exporta la vista ER.
 
 # Puerto del servidor
 server.port=8080
