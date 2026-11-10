@@ -519,3 +519,5 @@ tramp
 .cache/
 cache/
 .tmp/
+# El código fuente de la app (uml-board/src/lib) SÍ se versiona
+!uml-board/src/lib/

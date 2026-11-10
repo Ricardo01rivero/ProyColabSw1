@@ -20,15 +20,13 @@ las extensiones propias, que se irán listando aquí:
 ## 🎯 Project Structure
 
 ```
-proyecto-software-1/
-├── uml-board/          # Main React/TypeScript application
-│   ├── src/           # Application source code
-│   ├── public/        # Static assets
-│   └── dist/          # Build output
-└── scripts/           # Utility scripts and tools
-    ├── analyze_class_diagram.py    # Diagram analysis tools
-    ├── test_query.py              # OpenAI API testing
-    └── daily-backup.sh            # Automated backups
+ProyColabSw1/
+├── uml-board/          # Aplicación React/TypeScript (frontend)
+│   ├── src/           # Código fuente
+│   └── public/        # Recursos estáticos
+├── supabase/           # Esquema SQL y Edge Function openai-proxy
+├── README-INSTALACION.md     # Cómo instalar y ejecutar
+└── README-FUNCIONAMIENTO.md  # Qué funciona y cómo cumple los requisitos
 ```
 
 ## 🚀 Getting Started
@@ -76,8 +74,9 @@ npm run build
 ## 📚 Documentation
 
 Additional documentation can be found in:
+- [README-INSTALACION.md](README-INSTALACION.md) - Pasos de instalación y configuración
+- [README-FUNCIONAMIENTO.md](README-FUNCIONAMIENTO.md) - Funcionamiento y requisitos de los parciales
 - `uml-board/CODING_STANDARDS.md` - Code style guide
-- `scripts/README.md` - Utility scripts documentation
 
 ---
 
