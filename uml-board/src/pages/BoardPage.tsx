@@ -17,6 +17,8 @@ import { NODE_WIDTH, NODE_HEIGHT, calculateNodeHeight } from '../utils/umlConsta
 import UmlPrompt from './UmlPrompt';
 // Chat compartido con la IA "dev senior" (2do parcial)
 import ChatPanel from '../components/ChatPanel';
+import ErView from '../components/ErView';
+import { exportarSql } from '../utils/sqlGenerator';
 import { clearCurrentUserName, getCurrentUserName } from '../lib/currentUser';
 import './StylesUmlPrompt.css';
 
@@ -148,6 +150,19 @@ const BoardPage = ({ mode = 'host' }: { mode?: 'host' | 'guest' }) => {
   // Chat compartido con la IA
   const userName = getCurrentUserName() || 'Anónimo';
   const [isChatOpen, setIsChatOpen] = useState(false);
+  // Vista activa: diagrama de clases o modelo entidad-relación (derivado del mismo diagrama)
+  const [viewMode, setViewMode] = useState<'clases' | 'er'>('clases');
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  const [toolbarHeight, setToolbarHeight] = useState(70);
+  useEffect(() => {
+    const el = toolbarRef.current;
+    if (!el) return;
+    const update = () => setToolbarHeight(el.offsetHeight);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
   const [chatUnread, setChatUnread] = useState(0);
   const [onlineCount, setOnlineCount] = useState(0);
 
@@ -1051,7 +1066,7 @@ const BoardPage = ({ mode = 'host' }: { mode?: 'host' | 'guest' }) => {
       }}
     >
       {/* Barra de herramientas superior */}
-      <div style={toolbarStyle} data-toolbar='true'>
+      <div ref={toolbarRef} style={toolbarStyle} data-toolbar='true'>
         <h1 style={titleStyle}>🎨 UML Designer</h1>
         
         {/* Indicador de modo */}
@@ -1355,11 +1370,35 @@ const BoardPage = ({ mode = 'host' }: { mode?: 'host' | 'guest' }) => {
             >
               📱 Frontend
             </button>
+            <button
+              onClick={() =>
+                exportarSql(
+                  nodes,
+                  edges.map(convertReactFlowToUMLEdge),
+                  currentBoardData?.name || 'Diagrama Principal'
+                )
+              }
+              style={{ ...groupBtn, background: '#ef6c00', color: '#fff' }}
+              title='SQL: descarga el script CREATE TABLE para PostgreSQL (tablas, PK y FK) del modelo entidad-relación'
+            >
+              🧾 SQL
+            </button>
           </div>
 
           {/* Grupo: Vista (zoom) */}
           <div style={groupStyle}>
             <span style={groupLabelStyle}>Vista</span>
+            <button
+              onClick={() => setViewMode(v => (v === 'clases' ? 'er' : 'clases'))}
+              style={{ ...groupBtn, background: viewMode === 'er' ? '#ff9800' : '#546e7a', color: '#fff' }}
+              title={
+                viewMode === 'er'
+                  ? 'Volver al diagrama de clases para editar'
+                  : 'Ver el modelo entidad-relación (tablas, PK, FK, notación pata de gallo) generado del diagrama'
+              }
+            >
+              {viewMode === 'er' ? '🗂️ Ver Clases' : '📊 Ver ER'}
+            </button>
             <button onClick={handleZoomOut} style={{ ...groupBtn, background: '#546e7a', color: '#fff' }} title='Alejar: reduce el zoom del diagrama'>
               🔍-
             </button>
@@ -1463,6 +1502,10 @@ const BoardPage = ({ mode = 'host' }: { mode?: 'host' | 'guest' }) => {
       {/* Hidden inputs */}
       <input ref={jsonInputRef} type='file' accept='.json' style={{ display: 'none' }} onChange={handleJSONFileSelect} />
       <input ref={fileInputRef} type='file' accept='image/*' onChange={handleFileSelect} style={{ display: 'none' }} />
+
+      {viewMode === 'er' && (
+        <ErView nodes={nodes} edges={edges.map(convertReactFlowToUMLEdge)} top={toolbarHeight} />
+      )}
 
       {/* Canvas */}
       <div
