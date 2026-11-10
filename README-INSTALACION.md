@@ -24,7 +24,7 @@ y con IA gratuita (Google Gemini). Sigue los pasos en orden.
 ```bash
 git clone https://github.com/Ricardo01rivero/ProyColabSw1.git
 cd ProyColabSw1
-git checkout cinthia
+
 ```
 
 ---
@@ -37,7 +37,8 @@ npm install
 ```
 
 ---
-
+npm run dev
+----
 ## 4. Crear tu proyecto de Supabase
 
 1. En https://supabase.com crea un proyecto nuevo (plan Free).
