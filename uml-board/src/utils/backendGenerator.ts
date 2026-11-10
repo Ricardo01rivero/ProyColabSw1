@@ -38,6 +38,30 @@ function generateSimpleFields(cls: ClassNode): string {
 }
 
 // Genera los campos foráneos con anotaciones JPA para CASCADE DELETE
+/**
+ * Clave foránea real: se mantiene el campo numérico (xxxId) que usa el JSON/Postman/Flutter
+ * y se mapea además una relación @ManyToOne de solo lectura sobre la MISMA columna.
+ * Esa relación es la que hace que Hibernate cree el FOREIGN KEY ... ON DELETE CASCADE en la BD.
+ */
+function generateFkField(fieldName: string, constraintName: string, targetLabel: string): string {
+  const relationName = fieldName.replace(/Id$/, '') || targetLabel.charAt(0).toLowerCase() + targetLabel.slice(1);
+  return [
+    `    @Column(name = "${fieldName}")`,
+    `    private Long ${fieldName};`,
+    ``,
+    `    // Relación solo para crear la clave foránea real en PostgreSQL (el JSON usa ${fieldName})`,
+    `    @ManyToOne(fetch = FetchType.LAZY)`,
+    `    @JoinColumn(name = "${fieldName}", referencedColumnName = "id", insertable = false, updatable = false,`,
+    `                foreignKey = @ForeignKey(name = "${constraintName}"))`,
+    `    @OnDelete(action = OnDeleteAction.CASCADE)`,
+    `    @JsonIgnore`,
+    `    @ToString.Exclude`,
+    `    @EqualsAndHashCode.Exclude`,
+    `    private ${targetLabel} ${relationName};`,
+    ``,
+  ].join('\n') + '\n';
+}
+
 function generateForeignKeyFields(cls: ClassNode, nodes: NodeType[], edges: EdgeType[]): string {
   let result = '';
   // Para clases asociativas, agregar foráneas a las dos clases relacionadas con CASCADE
@@ -58,11 +82,7 @@ function generateForeignKeyFields(cls: ClassNode, nodes: NodeType[], edges: Edge
         const fieldName = relClass.label.charAt(0).toLowerCase() + relClass.label.slice(1) + 'Id';
         const constraintName = `FK_${cls.label.toUpperCase()}_${relClass.label.toUpperCase()}`;
         console.log(`   ✅ Agregando FK: ${fieldName} → ${relClass.label}`);
-        result += `    @Column(name = "${fieldName}")\n`;
-        result += `    @JoinColumn(name = "${fieldName}", referencedColumnName = "id",\n`;
-        result += `               foreignKey = @ForeignKey(name = "${constraintName}",\n`;
-        result += `                           foreignKeyDefinition = "FOREIGN KEY (${fieldName}) REFERENCES ${relClass.label.toLowerCase()}(id) ON DELETE CASCADE"))\n`;
-        result += `    private Long ${fieldName};\n`;
+        result += generateFkField(fieldName, constraintName, relClass.label);
       } else {
         console.warn(`❌ No se encontró clase relacionada para ID/nombre: ${relId}`);
       }
@@ -78,11 +98,7 @@ function generateForeignKeyFields(cls: ClassNode, nodes: NodeType[], edges: Edge
         const fieldName =
           parentClass.label.charAt(0).toLowerCase() + parentClass.label.slice(1) + 'Id';
         const constraintName = `FK_${cls.label.toUpperCase()}_${parentClass.label.toUpperCase()}`;
-        result += `    @Column(name = "${fieldName}")\n`;
-        result += `    @JoinColumn(name = "${fieldName}", referencedColumnName = "id",\n`;
-        result += `               foreignKey = @ForeignKey(name = "${constraintName}",\n`;
-        result += `                           foreignKeyDefinition = "FOREIGN KEY (${fieldName}) REFERENCES ${parentClass.label.toLowerCase()}(id) ON DELETE CASCADE"))\n`;
-        result += `    private Long ${fieldName};\n`;
+        result += generateFkField(fieldName, constraintName, parentClass.label);
       }
     });
   // Para otras relaciones, agregar foráneas por cada relación donde esta clase es destino
@@ -98,11 +114,7 @@ function generateForeignKeyFields(cls: ClassNode, nodes: NodeType[], edges: Edge
         originClass.label.charAt(0).toLowerCase() + originClass.label.slice(1) + 'Id';
       if (!added.has(fieldName)) {
         const constraintName = `FK_${cls.label.toUpperCase()}_${originClass.label.toUpperCase()}`;
-        result += `    @Column(name = "${fieldName}")\n`;
-        result += `    @JoinColumn(name = "${fieldName}", referencedColumnName = "id",\n`;
-        result += `               foreignKey = @ForeignKey(name = "${constraintName}",\n`;
-        result += `                           foreignKeyDefinition = "FOREIGN KEY (${fieldName}) REFERENCES ${originClass.label.toLowerCase()}(id) ON DELETE CASCADE"))\n`;
-        result += `    private Long ${fieldName};\n`;
+        result += generateFkField(fieldName, constraintName, originClass.label);
         added.add(fieldName);
       }
     }
@@ -122,7 +134,12 @@ function generateEntity(cls: ClassNode, nodes: NodeType[], edges: EdgeType[]): s
 package com.example.demo.entity;
 
 import jakarta.persistence.*;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
+import lombok.ToString;
+import org.hibernate.annotations.OnDelete;
+import org.hibernate.annotations.OnDeleteAction;
 import java.time.LocalDate;
 
 @Entity
@@ -385,7 +402,8 @@ spring.datasource.username=postgres
 spring.datasource.password=postgres
 
 # Configuración JPA/Hibernate
-spring.jpa.hibernate.ddl-auto=create-drop
+# update: crea/ajusta las tablas sin borrar los datos al reiniciar
+spring.jpa.hibernate.ddl-auto=update
 spring.jpa.show-sql=true
 spring.jpa.properties.hibernate.format_sql=true
 spring.jpa.properties.hibernate.hbm2ddl.create_namespaces=true
@@ -401,9 +419,7 @@ server.port=8080
 }
 
 function generateDockerFiles(): { dockerCompose: string; dockerfile: string } {
-  const dockerCompose = `version: '3.8'
-
-services:
+  const dockerCompose = `services:
   postgres:
     image: postgres:15-alpine
     container_name: demo-postgres
@@ -415,6 +431,11 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d demo"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     networks:
       - demo-network
 
@@ -422,7 +443,9 @@ services:
     build: .
     container_name: demo-app
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+    restart: on-failure
     ports:
       - "8080:8080"
     environment:
@@ -440,14 +463,19 @@ networks:
     driver: bridge
 `;
 
-  const dockerfile = `FROM openjdk:17-jdk-slim
+  const dockerfile = `# Etapa 1: compilar con Maven (no hace falta tener Java ni Maven instalados)
+FROM maven:3.9-eclipse-temurin-17 AS build
+WORKDIR /build
+COPY pom.xml .
+RUN mvn -q dependency:go-offline
+COPY src ./src
+RUN mvn -q clean package -DskipTests
 
+# Etapa 2: imagen liviana solo con el runtime de Java
+FROM eclipse-temurin:17-jre
 WORKDIR /app
-
-COPY target/demo-0.0.1-SNAPSHOT.jar app.jar
-
+COPY --from=build /build/target/demo-0.0.1-SNAPSHOT.jar app.jar
 EXPOSE 8080
-
 ENTRYPOINT ["java", "-jar", "app.jar"]
 `;
 
@@ -492,14 +520,14 @@ Este proyecto usa PostgreSQL en Docker para un entorno de desarrollo completo.
 
 ### 🚀 Ejecutar el Proyecto:
 
-#### Opción 1: Solo Base de Datos en Docker
-1. \`docker-compose up -d postgres\`
-2. \`mvn clean install\`
-3. \`mvn spring-boot:run\`
+#### Opción 1: Todo en Docker (recomendada, no requiere Java instalado)
+1. Abrir Docker Desktop
+2. \`docker compose up --build\`
+3. Esperar el mensaje "Started DemoApplication" y abrir \`http://localhost:8080/swagger-ui.html\`
 
-#### Opción 2: Todo en Docker
-1. \`mvn clean install\`
-2. \`docker-compose up --build\`
+#### Opción 2: Desde el IDE (IntelliJ / VS Code / Eclipse con JDK 17)
+1. \`docker compose up -d postgres\` (solo la base de datos)
+2. Abrir la carpeta en el IDE y ejecutar \`DemoApplication\` (o \`mvn spring-boot:run\`)
 
 ### 📊 Acceso a la Base de Datos:
 - **Host**: \`localhost:5432\`
@@ -703,6 +731,34 @@ public class DemoApplication {
 
     public static void main(String[] args) {
         SpringApplication.run(DemoApplication.class, args);
+    }
+}
+`.trim()
+  );
+
+  // Errores de integridad (FK inexistente, duplicados) -> 409 con mensaje claro en vez de 500
+  zip.file(
+    'spring-crud/src/main/java/com/example/demo/controller/GlobalExceptionHandler.java',
+    `
+package com.example.demo.controller;
+
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+import java.util.Map;
+
+@RestControllerAdvice
+public class GlobalExceptionHandler {
+
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<Map<String, String>> handleIntegrity(DataIntegrityViolationException ex) {
+        String detalle = ex.getMostSpecificCause().getMessage();
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of(
+            "error", "Violación de integridad: el registro relacionado no existe o el dato está duplicado",
+            "detalle", detalle == null ? "" : detalle
+        ));
     }
 }
 `.trim()
