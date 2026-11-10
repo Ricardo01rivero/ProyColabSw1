@@ -15,6 +15,9 @@ import type { NodeType, EdgeType } from '../utils/umlConstants';
 import { NODE_WIDTH, NODE_HEIGHT, calculateNodeHeight } from '../utils/umlConstants';
 //estos son parte del asistente uml
 import UmlPrompt from './UmlPrompt';
+// Chat compartido con la IA "dev senior" (2do parcial)
+import ChatPanel from '../components/ChatPanel';
+import { clearCurrentUserName, getCurrentUserName } from '../lib/currentUser';
 import './StylesUmlPrompt.css';
 
 // Tipos para datos de Supabase
@@ -116,6 +119,12 @@ const statusStyle: React.CSSProperties = {
 const BoardPage = ({ mode = 'host' }: { mode?: 'host' | 'guest' }) => {
   // Estado para el asistente UML
   const [isPromptOpen, setIsPromptOpen] = useState(false);
+
+  // Chat compartido con la IA
+  const userName = getCurrentUserName() || 'Anónimo';
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [chatUnread, setChatUnread] = useState(0);
+  const [onlineCount, setOnlineCount] = useState(0);
 
   // Estado temporal para edición (evita conflictos con sincronización)
   const editTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -1024,6 +1033,9 @@ const BoardPage = ({ mode = 'host' }: { mode?: 'host' | 'guest' }) => {
         <span style={{ ...statusStyle, background: mode === 'host' ? 'rgba(76, 175, 80, 0.3)' : 'rgba(33, 150, 243, 0.3)' }}>
           {mode === 'host' ? '🏠 Anfitrión' : '👤 Invitado'}
         </span>
+        <span style={statusStyle} title='Tu nombre en el chat'>
+          🙋 {userName}
+        </span>
 
         {/* Selector de pizarras */}
         <div style={{ position: 'relative', marginRight: '16px' }}>
@@ -1317,9 +1329,42 @@ const BoardPage = ({ mode = 'host' }: { mode?: 'host' | 'guest' }) => {
 
         <div style={{ flex: 1 }}></div>
 
+        {/* Botón del chat compartido con la IA */}
+        <button
+          onClick={() => setIsChatOpen(open => !open)}
+          style={{
+            ...buttonStyle,
+            background: isChatOpen ? '#4527a0' : '#5e35b1',
+            color: '#fff',
+            position: 'relative',
+            minWidth: '110px',
+          }}
+          title='Chat del equipo con la IA desarrollador senior'
+        >
+          💬 Chat IA{onlineCount > 0 ? ` · 👥 ${onlineCount}` : ''}
+          {chatUnread > 0 && (
+            <span
+              style={{
+                position: 'absolute',
+                top: -6,
+                right: -6,
+                background: '#e53935',
+                color: '#fff',
+                borderRadius: 10,
+                fontSize: 11,
+                fontWeight: 700,
+                padding: '2px 6px',
+              }}
+            >
+              {chatUnread}
+            </span>
+          )}
+        </button>
+
         {/* Botón cerrar sesión */}
         <button
           onClick={() => {
+            clearCurrentUserName();
             window.location.href = '/login';
           }}
           style={{
@@ -1445,6 +1490,22 @@ const BoardPage = ({ mode = 'host' }: { mode?: 'host' | 'guest' }) => {
         existingNodes={nodes}
         existingEdges={edges.map(convertReactFlowToUMLEdge)}
       />
+
+      {/* 💬 Chat compartido con la IA "dev senior" (siempre montado para contar no leídos) */}
+      {currentBoardData && (
+        <ChatPanel
+          isOpen={isChatOpen}
+          onClose={() => setIsChatOpen(false)}
+          boardId={currentBoardData.id}
+          boardName={currentBoardData.name}
+          userName={userName}
+          isHost={mode === 'host'}
+          nodes={nodes}
+          edges={edges.map(convertReactFlowToUMLEdge)}
+          onUnreadChange={setChatUnread}
+          onOnlineChange={setOnlineCount}
+        />
+      )}
     </div>
   );
 };

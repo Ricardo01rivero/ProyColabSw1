@@ -91,3 +91,59 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO public.boards (id, name, diagram_id)
 VALUES ('1', 'Diagrama Principal', '550e8400-e29b-41d4-a716-446655440000')
 ON CONFLICT (id) DO NOTHING;
+
+-- 8) Chat compartido con la IA (2do parcial). Mismo contenido que chat.sql
+CREATE TABLE IF NOT EXISTS public.chat_messages (
+  id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  board_id         text NOT NULL REFERENCES public.boards(id) ON DELETE CASCADE,
+  author           text NOT NULL,                 -- nombre de quien escribe ('IA' para la IA)
+  role             text NOT NULL CHECK (role IN ('user', 'assistant')),
+  content          text NOT NULL,
+  reply_to_author  text,                          -- a quién responde la IA
+  created_at       timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS chat_messages_board_created_idx
+  ON public.chat_messages (board_id, created_at);
+
+ALTER TABLE public.chat_messages ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "acceso publico chat" ON public.chat_messages;
+CREATE POLICY "acceso publico chat" ON public.chat_messages
+  FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+
+-- Tiempo real: todos los usuarios de la pizarra ven los mensajes al instante
+ALTER TABLE public.chat_messages REPLICA IDENTITY FULL;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_publication_tables
+                 WHERE pubname = 'supabase_realtime' AND tablename = 'chat_messages') THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.chat_messages;
+  END IF;
+END $$;
+
+-- 9) Chat v2: privados y adjuntos. Mismo contenido que chat_v2.sql
+ALTER TABLE public.chat_messages ADD COLUMN IF NOT EXISTS recipient text;
+
+-- Archivos adjuntos (se guardan en el bucket chat-archivos)
+ALTER TABLE public.chat_messages ADD COLUMN IF NOT EXISTS attachment_url  text;
+ALTER TABLE public.chat_messages ADD COLUMN IF NOT EXISTS attachment_name text;
+ALTER TABLE public.chat_messages ADD COLUMN IF NOT EXISTS attachment_type text;
+
+-- Bucket público para los archivos del chat (máx. 10 MB por archivo)
+INSERT INTO storage.buckets (id, name, public, file_size_limit)
+VALUES ('chat-archivos', 'chat-archivos', true, 10485760)
+ON CONFLICT (id) DO UPDATE SET public = true, file_size_limit = 10485760;
+
+DROP POLICY IF EXISTS "chat archivos lectura" ON storage.objects;
+CREATE POLICY "chat archivos lectura" ON storage.objects
+  FOR SELECT TO anon, authenticated USING (bucket_id = 'chat-archivos');
+
+DROP POLICY IF EXISTS "chat archivos subida" ON storage.objects;
+CREATE POLICY "chat archivos subida" ON storage.objects
+  FOR INSERT TO anon, authenticated WITH CHECK (bucket_id = 'chat-archivos');
+
+DROP POLICY IF EXISTS "chat archivos borrado" ON storage.objects;
+CREATE POLICY "chat archivos borrado" ON storage.objects
+  FOR DELETE TO anon, authenticated USING (bucket_id = 'chat-archivos');

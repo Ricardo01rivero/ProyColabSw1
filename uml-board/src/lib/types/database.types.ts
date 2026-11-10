@@ -62,6 +62,56 @@ export interface Database {
         };
         Relationships: [];
       };
+      chat_messages: {
+        Row: {
+          id: string;
+          board_id: string;
+          author: string;
+          role: 'user' | 'assistant';
+          content: string;
+          reply_to_author: string | null;
+          recipient: string | null;
+          attachment_url: string | null;
+          attachment_name: string | null;
+          attachment_type: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          board_id: string;
+          author: string;
+          role: 'user' | 'assistant';
+          content: string;
+          reply_to_author?: string | null;
+          recipient?: string | null;
+          attachment_url?: string | null;
+          attachment_name?: string | null;
+          attachment_type?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          board_id?: string;
+          author?: string;
+          role?: 'user' | 'assistant';
+          content?: string;
+          reply_to_author?: string | null;
+          recipient?: string | null;
+          attachment_url?: string | null;
+          attachment_name?: string | null;
+          attachment_type?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'chat_messages_board_id_fkey';
+            columns: ['board_id'];
+            isOneToOne: false;
+            referencedRelation: 'boards';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
     };
     Views: {
       [_ in never]: never;
@@ -86,6 +136,9 @@ export type BoardUpdate = Database['public']['Tables']['boards']['Update'];
 export type Diagram = Database['public']['Tables']['diagrams']['Row'];
 export type DiagramInsert = Database['public']['Tables']['diagrams']['Insert'];
 export type DiagramUpdate = Database['public']['Tables']['diagrams']['Update'];
+
+export type ChatMessage = Database['public']['Tables']['chat_messages']['Row'];
+export type ChatMessageInsert = Database['public']['Tables']['chat_messages']['Insert'];
 
 // Tipos específicos para ReactFlow basados en la estructura actual
 export interface ReactFlowNode {
