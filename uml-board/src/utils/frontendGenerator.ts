@@ -3,6 +3,11 @@ import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import type { NodeType, EdgeType } from './umlConstants';
 import { foreignKeysFor } from './fkRules';
+// Modo offline: archivos Dart reales (se pueden analizar y probar con Flutter) que se copian al proyecto generado
+import offlineStoreDart from '../templates/flutter/offline_store.dart?raw';
+import syncServiceDart from '../templates/flutter/sync_service.dart?raw';
+import offlineHttpDart from '../templates/flutter/offline_http.dart?raw';
+import offlineBannerDart from '../templates/flutter/offline_banner.dart?raw';
 import { normalizeAttributeNamesForCode } from './umlConstants';
 
 // Utilidades
@@ -123,6 +128,8 @@ dependencies:
     sdk: flutter
   cupertino_icons: ^1.0.2
   http: ^1.1.0
+  sqflite: ^2.3.0
+  path: ^1.8.0
 
 dev_dependencies:
   flutter_test:
@@ -153,8 +160,15 @@ function generateMainDart(classes: NodeType[]): string {
   return `import 'package:flutter/material.dart';
 ${imports}
 import 'widgets/app_drawer.dart';
+import 'widgets/offline_banner.dart';
+import 'data/offline_store.dart';
+import 'data/sync_service.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Base de datos local (SQLite) y sincronización automática al volver la conexión
+  await OfflineStore.instance.init();
+  SyncService.instance.start();
   runApp(const MyApp());
 }
 
@@ -168,6 +182,13 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
+      ),
+      // Aviso de "sin conexión" / "sincronizando" visible en todas las pantallas
+      builder: (context, child) => Column(
+        children: [
+          Expanded(child: child ?? const SizedBox.shrink()),
+          const OfflineBanner(),
+        ],
       ),
       home: const HomeScreen(),
       routes: {
@@ -202,6 +223,15 @@ class HomeScreen extends StatelessWidget {
             Text(
               'Selecciona una entidad del menú lateral',
               style: TextStyle(fontSize: 16, color: Colors.grey),
+            ),
+            SizedBox(height: 24),
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: 32),
+              child: Text(
+                'Funciona sin internet: los cambios se guardan en el teléfono y se envían solos al volver la conexión.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 13, color: Colors.grey),
+              ),
             ),
           ],
         ),
@@ -330,7 +360,7 @@ function generateServiceForClass(cls: NodeType): string {
   const endpoint = cls.label.toLowerCase() + 's';
 
   return `import 'dart:convert';
-import 'package:http/http.dart' as http;
+import 'package:flutter_mvp/data/offline_http.dart' as http;
 import '../models/${cls.label.toLowerCase()}_model.dart';
 import '../config/api_config.dart';
 
@@ -512,7 +542,7 @@ function generateListScreen(cls: NodeType, nodes: NodeType[], edges: EdgeType[])
 
   return `import 'package:flutter/material.dart';
 import 'dart:convert';
-import 'package:http/http.dart' as http;
+import 'package:flutter_mvp/data/offline_http.dart' as http;
 import '../../services/${endpoint}_service.dart';
 import '../../models/${endpoint}_model.dart';
 import '../../config/api_config.dart';
@@ -812,7 +842,7 @@ function generateDetailsScreen(
 
   return `import 'package:flutter/material.dart';
 import 'dart:convert';
-import 'package:http/http.dart' as http;
+import 'package:flutter_mvp/data/offline_http.dart' as http;
 import '../../models/${associativeEntity.label.toLowerCase()}_model.dart';
 import '../../config/api_config.dart';
 import '${associativeEntity.label.toLowerCase()}_form_dialog.dart';
@@ -1645,7 +1675,7 @@ ${detailRows}
 
   return `import 'package:flutter/material.dart';
 import 'dart:convert';
-import 'package:http/http.dart' as http;
+import 'package:flutter_mvp/data/offline_http.dart' as http;
 import '../../services/${endpoint}_service.dart';
 import '../../models/${endpoint}_model.dart';
 import '../../config/api_config.dart';
@@ -2136,6 +2166,19 @@ ifconfig | grep inet
 ipconfig
 \`\`\`
 
+## Offline mode
+
+The app keeps working without internet:
+
+- Everything you read is stored on the phone (SQLite, \`lib/data/offline_store.dart\`).
+- Without a connection, lists and details are shown from that local copy.
+- Creating, editing and deleting still work: changes are saved locally in a queue and sent
+  automatically (every 15 s and when the connection returns) by \`lib/data/sync_service.dart\`.
+- A bar at the bottom shows "Sin conexión" / "Sincronizando N cambio(s)". Tap it to force a sync.
+- Records created offline get a temporary negative id; when synced, the server id replaces it
+  (including foreign keys of other pending records).
+- Real-time collaboration and the cloud AI need a network and are not available offline.
+
 ## Project Structure
 
 \`\`\`
@@ -2143,6 +2186,7 @@ lib/
 ├── main.dart
 ├── config/
 │   └── api_config.dart  # 🔧 API Configuration (change URL here!)
+├── data/                # Offline mode (SQLite cache, sync queue, http wrapper)
 ├── models/              # Data models for each entity
 ├── services/            # API services for each entity
 ├── screens/             # CRUD screens organized by entity
@@ -2243,6 +2287,13 @@ export async function generarFrontend(nodes: NodeType[], edges: EdgeType[], boar
   // Widgets compartidos
   widgetsFolder?.file('sidebar.dart', generateSidebar(classes));
   widgetsFolder?.file('app_drawer.dart', generateAppDrawer(classes));
+
+  // Modo offline: base local SQLite, cola de sincronización y reemplazo de http
+  const dataFolder = libFolder?.folder('data');
+  dataFolder?.file('offline_store.dart', offlineStoreDart);
+  dataFolder?.file('sync_service.dart', syncServiceDart);
+  dataFolder?.file('offline_http.dart', offlineHttpDart);
+  widgetsFolder?.file('offline_banner.dart', offlineBannerDart);
 
   // Archivo de configuración centralizada
   const configFolder = libFolder?.folder('config');
