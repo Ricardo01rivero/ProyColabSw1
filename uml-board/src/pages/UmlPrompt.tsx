@@ -135,7 +135,7 @@ const UmlPrompt: React.FC<UmlPromptProps> = ({
         try {
           isListeningRef.current = false;
           recognitionRef.current.stop();
-        } catch (err) {
+        } catch {
           console.log('Ya estaba detenido');
         }
       }
