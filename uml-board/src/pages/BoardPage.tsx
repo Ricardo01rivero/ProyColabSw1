@@ -66,6 +66,7 @@ type SupabaseEdgeOutput = {
 };
 
 const buttonStyle: React.CSSProperties = {
+  fontFamily: 'inherit',
   border: 'none',
   borderRadius: 8,
   padding: '10px 16px',
@@ -1052,6 +1053,7 @@ const BoardPage = ({ mode = 'host' }: { mode?: 'host' | 'guest' }) => {
         overflow: 'hidden',
         background: '#f5f5f5',
         paddingTop: '70px',
+        fontFamily: "'Comfortaa', 'Segoe UI', system-ui, sans-serif",
       }}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
