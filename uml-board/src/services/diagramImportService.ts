@@ -1,16 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { createClient } from '@supabase/supabase-js';
 import type { NodeType, EdgeType } from '../utils/umlConstants';
 
-// Configuración de Supabase
-const supabaseUrl = 'https://bwduexqzhjolwfxupvco.supabase.co';
-const supabaseKey =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ3ZHVleHF6aGpvbHdmeHVwdmNvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjA5ODc3NzAsImV4cCI6MjA3NjU2Mzc3MH0.WQiWHEYBzsT0LAa5N3quDDiZlYzfOVz7lY86ZF02RjI';
-const supabase = createClient(supabaseUrl, supabaseKey);
-
-// Edge Function proxy para OpenAI (SOLO oculta el token)
-const OPENAI_PROXY_URL = 'https://izsllyjacdhfeoexwpvh.supabase.co/functions/v1/openai-proxy';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml6c2xseWphY2RoZmVvZXh3cHZoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjEwODk2NjQsImV4cCI6MjA3NjY2NTY2NH0.VYW4TKIdKLj2JcL3lxOCTBT6QwOhMrG_P6WWFSAnRDM';
+// Supabase y proxy de OpenAI (centralizados en supabase.config)
+import { supabase, OPENAI_PROXY_URL, SUPABASE_ANON_KEY } from '../lib/supabase.config';
 
 // Tipos para el análisis OpenAI
 type OpenAIClass = {
@@ -1024,8 +1016,11 @@ Reglas universales:
   if (!response.ok) {
     const errorData = await response
       .json()
-      .catch(() => ({ error: { message: 'Error desconocido' } }));
-    throw new Error(`Error OpenAI: ${errorData.error?.message || response.statusText}`);
+      .catch(() => ({ error: 'Error desconocido' }));
+    // El proxy devuelve { error: "texto" }; OpenAI devuelve { error: { message } }
+    const detalle =
+      typeof errorData.error === 'string' ? errorData.error : errorData.error?.message;
+    throw new Error(`Error IA: ${detalle || response.statusText || response.status}`);
   }
 
   const result = await response.json();
@@ -1042,11 +1037,12 @@ Reglas universales:
   // Parsear respuesta
   let content = result.choices[0]?.message?.content || '';
 
-  // Limpiar markdown si existe
-  if (content.startsWith('```json')) {
-    content = content.replace('```json', '').replace('```', '').trim();
-  } else if (content.startsWith('```')) {
-    content = content.replace('```', '').strip();
+  // Limpiar markdown si existe (```json ... ```) y quedarse solo con el objeto JSON
+  content = content.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+  const inicioJson = content.indexOf('{');
+  const finJson = content.lastIndexOf('}');
+  if (inicioJson > 0 || (finJson !== -1 && finJson < content.length - 1)) {
+    content = content.slice(inicioJson, finJson + 1);
   }
 
   try {

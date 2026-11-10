@@ -1,11 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { createClient } from '@supabase/supabase-js';
-
-// Configuración de Supabase
-const supabaseUrl = 'https://bwduexqzhjolwfxupvco.supabase.co';
-const supabaseKey =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ3ZHVleHF6aGpvbHdmeHVwdmNvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjA5ODc3NzAsImV4cCI6MjA3NjU2Mzc3MH0.WQiWHEYBzsT0LAa5N3quDDiZlYzfOVz7lY86ZF02RjI';
-const supabase = createClient(supabaseUrl, supabaseKey);
+import { supabase, SUPABASE_URL as supabaseUrl } from '../lib/supabase.config';
 
 type UploadedImage = {
   id: string;

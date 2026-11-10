@@ -97,6 +97,13 @@ const UmlPrompt: React.FC<UmlPromptProps> = ({
         setError('❌ Permiso de micrófono denegado. Por favor, permite el acceso al micrófono.');
       } else if (event.error === 'aborted') {
         console.log('⚠️ Reconocimiento abortado, reiniciando...');
+      } else if (event.error === 'network' || event.error === 'service-not-allowed') {
+        // El dictado usa los servidores de Google: solo funciona en Chrome o Edge con internet
+        isListeningRef.current = false;
+        setIsListening(false);
+        setError(
+          '❌ El dictado por voz no está disponible en este navegador. Abre la app en Google Chrome o Microsoft Edge (con internet).'
+        );
       } else {
         isListeningRef.current = false;
         setIsListening(false);

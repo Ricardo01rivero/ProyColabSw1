@@ -1,9 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { NodeType, EdgeType } from '../utils/umlConstants';
 
-// Configuración del proxy de OpenAI
-const PROXY_URL = 'https://izsllyjacdhfeoexwpvh.supabase.co/functions/v1/openai-proxy';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml6c2xseWphY2RoZmVvZXh3cHZoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjEwODk2NjQsImV4cCI6MjA3NjY2NTY2NH0.VYW4TKIdKLj2JcL3lxOCTBT6QwOhMrG_P6WWFSAnRDM'; 
+// Configuración del proxy de OpenAI (centralizada en supabase.config)
+import { OPENAI_PROXY_URL as PROXY_URL, SUPABASE_ANON_KEY } from '../lib/supabase.config'; 
 
 export interface DiagramAction {
   type: 'create' | 'update' | 'delete';
@@ -199,8 +198,11 @@ Respuesta: [{"type":"create","target":"class","data":{"label":"extremo_NEGRA","a
     if (!response.ok) {
       const errorData = await response
         .json()
-        .catch(() => ({ error: { message: 'Error desconocido' } }));
-      throw new Error(`Error OpenAI: ${errorData.error?.message || response.statusText}`);
+        .catch(() => ({ error: 'Error desconocido' }));
+      // El proxy devuelve { error: "texto" }; OpenAI devuelve { error: { message } }
+      const detalle =
+        typeof errorData.error === 'string' ? errorData.error : errorData.error?.message;
+      throw new Error(`Error IA: ${detalle || response.statusText || response.status}`);
     }
 
     const result = await response.json();

@@ -8,10 +8,18 @@ interface SupabaseError {
   code?: string;
 }
 
-// Configuración de Supabase - Credenciales del proyecto actual
-const supabaseUrl = 'https://izsllyjacdhfeoexwpvh.supabase.co';
-const supabaseKey =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml6c2xseWphY2RoZmVvZXh3cHZoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjEwODk2NjQsImV4cCI6MjA3NjY2NTY2NH0.VYW4TKIdKLj2JcL3lxOCTBT6QwOhMrG_P6WWFSAnRDM';
+// Configuración de Supabase (proyecto propio). La clave anon es pública por diseño.
+// Se pueden sobrescribir con VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY en uml-board/.env.local
+export const SUPABASE_URL: string =
+  import.meta.env.VITE_SUPABASE_URL || 'https://TU-PROYECTO.supabase.co';
+export const SUPABASE_ANON_KEY: string =
+  import.meta.env.VITE_SUPABASE_ANON_KEY || 'TU_CLAVE_ANON';
+
+// Edge Function que reenvía las peticiones a OpenAI (el token vive en Supabase, no aquí)
+export const OPENAI_PROXY_URL = `${SUPABASE_URL}/functions/v1/openai-proxy`;
+
+const supabaseUrl = SUPABASE_URL;
+const supabaseKey = SUPABASE_ANON_KEY;
 
 // Crear cliente de Supabase con tipos
 export const supabase = createClient<Database>(supabaseUrl, supabaseKey, {
