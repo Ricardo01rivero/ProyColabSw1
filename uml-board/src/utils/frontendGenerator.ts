@@ -124,6 +124,8 @@ dependencies:
   cupertino_icons: ^1.0.2
   http: ^1.1.0
   shared_preferences: ^2.2.0
+  sqflite: ^2.3.0
+  path: ^1.8.3
 
 dev_dependencies:
   flutter_test:
@@ -136,7 +138,8 @@ flutter:
 }
 
 // Genera main.dart
-function generateMainDart(classes: NodeType[]): string {
+function generateMainDart(classes: NodeType[], allClasses: NodeType[] = classes): string {
+  const offlineEntities = allClasses.map(c => `'${c.label.toLowerCase()}s'`).join(', ');
   const routes = classes
     .map(cls => {
       const className = cls.label.toLowerCase();
@@ -155,11 +158,15 @@ function generateMainDart(classes: NodeType[]): string {
 ${imports}
 import 'widgets/app_drawer.dart';
 import 'config/api_config.dart';
+import 'offline/sync_service.dart';
+import 'widgets/sync_banner.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // Carga la dirección del backend guardada en el dispositivo
   await ApiConfig.load();
+  // Modo sin conexión: base local SQLite + cola de cambios pendientes
+  await SyncService.instance.init(entities: [${offlineEntities}]);
   runApp(const MyApp());
 }
 
@@ -173,6 +180,10 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
+      ),
+      // Aviso de "sin conexión / cambios pendientes" encima de todas las pantallas
+      builder: (context, child) => Column(
+        children: [const SyncBanner(), Expanded(child: child ?? const SizedBox.shrink())],
       ),
       home: const HomeScreen(),
       routes: {
@@ -344,116 +355,36 @@ function generateServiceForClass(cls: NodeType): string {
   const className = capitalizeFirst(cls.label);
   const endpoint = cls.label.toLowerCase() + 's';
 
-  return `import 'dart:convert';
-import 'package:http/http.dart' as http;
-import '../models/${cls.label.toLowerCase()}_model.dart';
-import '../config/api_config.dart';
+  return `import '../models/${cls.label.toLowerCase()}_model.dart';
+import '../offline/offline_repository.dart';
 
+/// CRUD de ${className} contra el backend, con soporte sin conexión
+/// (copia local en SQLite y cola de sincronización: ver lib/offline/).
 class ${className}Service {
-  Future<List<${className}>> getAll() async {
-    try {
-      final response = await http.get(
-        Uri.parse(ApiConfig.endpoint('${endpoint}')),
-        headers: ApiConfig.headers,
-      ).timeout(ApiConfig.timeout);
+  final OfflineRepository _repo = OfflineRepository('${endpoint}');
 
-      if (response.statusCode == 200) {
-        final List<dynamic> jsonList = json.decode(response.body);
-        return jsonList.map((json) => ${className}.fromJson(json)).toList();
-      } else {
-        throw Exception('Failed to load ${endpoint}: \${response.statusCode}');
-      }
-    } catch (e) {
-      print('Error loading ${endpoint}: \$e');
-      return [];
-    }
-  }
+  Future<List<${className}>> getAll() async =>
+      (await _repo.getAll()).map((json) => ${className}.fromJson(json)).toList();
 
   Future<${className}?> getById(int id) async {
-    try {
-      final response = await http.get(
-        Uri.parse(ApiConfig.endpoint('${endpoint}/\$id')),
-        headers: ApiConfig.headers,
-      ).timeout(ApiConfig.timeout);
-
-      if (response.statusCode == 200) {
-        return ${className}.fromJson(json.decode(response.body));
-      } else {
-        print('Error getting ${cls.label.toLowerCase()} \$id: \${response.statusCode}');
-        return null;
-      }
-    } catch (e) {
-      print('Error getting ${cls.label.toLowerCase()} \$id: \$e');
-      return null;
-    }
+    final json = await _repo.getById(id);
+    return json == null ? null : ${className}.fromJson(json);
   }
 
   Future<${className}?> create(${className} item) async {
-    try {
-      final response = await http.post(
-        Uri.parse(ApiConfig.endpoint('${endpoint}')),
-        headers: ApiConfig.headers,
-        body: json.encode(item.toJson()),
-      ).timeout(ApiConfig.timeout);
-
-      if (response.statusCode == 201) {
-        return ${className}.fromJson(json.decode(response.body));
-      } else {
-        throw Exception('Failed to create ${cls.label.toLowerCase()}: \${response.statusCode}');
-      }
-    } catch (e) {
-      print('Error creating ${cls.label.toLowerCase()}: \$e');
-      return item; // Devuelve el item original para modo offline
-    }
+    final json = await _repo.create(item.toJson());
+    return json == null ? null : ${className}.fromJson(json);
   }
 
   Future<${className}?> update(${className} item) async {
-    try {
-      final response = await http.put(
-        Uri.parse(ApiConfig.endpoint('${endpoint}/\${item.id}')),
-        headers: ApiConfig.headers,
-        body: json.encode(item.toJson()),
-      ).timeout(ApiConfig.timeout);
-
-      if (response.statusCode == 200) {
-        return ${className}.fromJson(json.decode(response.body));
-      } else {
-        throw Exception('Failed to update ${cls.label.toLowerCase()}: \${response.statusCode}');
-      }
-    } catch (e) {
-      print('Error updating ${cls.label.toLowerCase()}: \$e');
-      return item; // Devuelve el item original para modo offline
-    }
+    final json = await _repo.update(item.id, item.toJson());
+    return json == null ? null : ${className}.fromJson(json);
   }
 
-  Future<bool> delete(int id) async {
-    try {
-      final response = await http.delete(
-        Uri.parse(ApiConfig.endpoint('${endpoint}/\$id')),
-        headers: ApiConfig.headers,
-      ).timeout(ApiConfig.timeout);
+  Future<bool> delete(int id) => _repo.delete(id);
 
-      return response.statusCode == 200 || response.statusCode == 204;
-    } catch (e) {
-      print('Error deleting ${cls.label.toLowerCase()} \$id: \$e');
-      return false;
-    }
-  }
-  
-  // Método helper para verificar conectividad con el backend
-  Future<bool> checkConnection() async {
-    try {
-      final response = await http.get(
-        Uri.parse(ApiConfig.healthCheck()),
-        headers: ApiConfig.headers,
-      ).timeout(const Duration(seconds: 5));
-      
-      return response.statusCode == 200;
-    } catch (e) {
-      print('Backend connection failed: \$e');
-      return false;
-    }
-  }
+  /// Verifica si el backend responde
+  Future<bool> checkConnection() => _repo.checkConnection();
 }
 `;
 }
@@ -527,7 +458,7 @@ function generateListScreen(cls: NodeType, nodes: NodeType[], edges: EdgeType[])
 
   return `import 'package:flutter/material.dart';
 import 'dart:convert';
-import 'package:http/http.dart' as http;
+import '../../offline/offline_http.dart' as http;
 import '../../services/${endpoint}_service.dart';
 import '../../models/${endpoint}_model.dart';
 import '../../config/api_config.dart';
@@ -827,7 +758,7 @@ function generateDetailsScreen(
 
   return `import 'package:flutter/material.dart';
 import 'dart:convert';
-import 'package:http/http.dart' as http;
+import '../../offline/offline_http.dart' as http;
 import '../../models/${associativeEntity.label.toLowerCase()}_model.dart';
 import '../../config/api_config.dart';
 import '${associativeEntity.label.toLowerCase()}_form_dialog.dart';
@@ -1660,7 +1591,7 @@ ${detailRows}
 
   return `import 'package:flutter/material.dart';
 import 'dart:convert';
-import 'package:http/http.dart' as http;
+import '../../offline/offline_http.dart' as http;
 import '../../services/${endpoint}_service.dart';
 import '../../models/${endpoint}_model.dart';
 import '../../config/api_config.dart';
@@ -2306,6 +2237,723 @@ function generateAndroidManifest(): string {
 `;
 }
 
+// ---- Modo sin conexión (SQLite + cola de sincronización), probado en Android ----
+function generateLocalStore(): string {
+  return `import 'dart:convert';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:path/path.dart' as p;
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:sqflite/sqflite.dart';
+
+/// Operación pendiente de enviar al backend (cola de sincronización).
+class PendingOp {
+  final int seq; // orden en que se hizo
+  final String entity; // endpoint, ej. 'clientes'
+  final String op; // 'create' | 'update' | 'delete'
+  final int itemId; // id del registro (negativo = creado sin conexión)
+  final Map<String, dynamic>? data;
+
+  PendingOp(this.seq, this.entity, this.op, this.itemId, this.data);
+
+  Map<String, dynamic> toMap() =>
+      {'seq': seq, 'entity': entity, 'op': op, 'item_id': itemId, 'data': data == null ? null : jsonEncode(data)};
+
+  static PendingOp fromMap(Map<String, dynamic> m) => PendingOp(
+        (m['seq'] as num).toInt(),
+        m['entity'] as String,
+        m['op'] as String,
+        (m['item_id'] as num).toInt(),
+        m['data'] == null ? null : Map<String, dynamic>.from(jsonDecode(m['data'] as String) as Map),
+      );
+}
+
+/// Almacenamiento local del modo sin conexión.
+///
+/// - Android / iOS: base de datos **SQLite** (\`crud_offline.db\`) con dos tablas:
+///     cache(entity, id, data)                      -> copia local de cada lista
+///     pending_ops(seq, entity, op, item_id, data)  -> cambios hechos sin conexión
+/// - Web (navegador): las mismas dos estructuras guardadas en shared_preferences.
+class LocalStore {
+  LocalStore._();
+
+  static Database? _db;
+  static SharedPreferences? _prefs;
+  static int _lastTempId = 0;
+
+  static Future<void> init() async {
+    if (kIsWeb) {
+      _prefs = await SharedPreferences.getInstance();
+      return;
+    }
+    final path = p.join(await getDatabasesPath(), 'crud_offline.db');
+    _db = await openDatabase(path, version: 1, onCreate: (db, version) async {
+      await db.execute(
+          'CREATE TABLE cache (entity TEXT NOT NULL, id INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY (entity, id))');
+      await db.execute('CREATE TABLE pending_ops (seq INTEGER PRIMARY KEY AUTOINCREMENT, entity TEXT NOT NULL, '
+          'op TEXT NOT NULL, item_id INTEGER NOT NULL, data TEXT)');
+    });
+  }
+
+  /// Id temporal (negativo y único) para registros creados sin conexión.
+  static int nextTempId() {
+    var id = -DateTime.now().millisecondsSinceEpoch;
+    if (id >= _lastTempId) id = _lastTempId - 1;
+    _lastTempId = id;
+    return id;
+  }
+
+  // ---------------------------------------------------------------- web (shared_preferences)
+  static Map<String, Map<String, dynamic>> _webCache(String entity) {
+    final raw = _prefs!.getString('offline_cache_$entity');
+    if (raw == null) return {};
+    return (jsonDecode(raw) as Map).map((k, v) => MapEntry(k as String, Map<String, dynamic>.from(v as Map)));
+  }
+
+  static Future<void> _saveWebCache(String entity, Map<String, Map<String, dynamic>> m) =>
+      _prefs!.setString('offline_cache_$entity', jsonEncode(m));
+
+  static List<Map<String, dynamic>> _webOps() {
+    final raw = _prefs!.getString('offline_pending_ops');
+    if (raw == null) return [];
+    return (jsonDecode(raw) as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+  }
+
+  static Future<void> _saveWebOps(List<Map<String, dynamic>> ops) =>
+      _prefs!.setString('offline_pending_ops', jsonEncode(ops));
+
+  // ---------------------------------------------------------------- caché de listas
+  static Future<List<Map<String, dynamic>>> readAll(String entity) async {
+    if (kIsWeb) return _webCache(entity).values.toList();
+    final rows = await _db!.query('cache', where: 'entity = ?', whereArgs: [entity], orderBy: 'id');
+    final items = rows.map((r) => Map<String, dynamic>.from(jsonDecode(r['data'] as String) as Map)).toList();
+    // Los creados sin conexión (id negativo) al final
+    items.sort((a, b) {
+      final ia = (a['id'] as num?)?.toInt() ?? 0, ib = (b['id'] as num?)?.toInt() ?? 0;
+      if ((ia < 0) != (ib < 0)) return ia < 0 ? 1 : -1;
+      return ia.compareTo(ib);
+    });
+    return items;
+  }
+
+  static Future<Map<String, dynamic>?> read(String entity, int id) async {
+    if (kIsWeb) return _webCache(entity)['$id'];
+    final rows = await _db!.query('cache', where: 'entity = ? AND id = ?', whereArgs: [entity, id]);
+    return rows.isEmpty ? null : Map<String, dynamic>.from(jsonDecode(rows.first['data'] as String) as Map);
+  }
+
+  static Future<void> upsert(String entity, Map<String, dynamic> item) async {
+    final id = (item['id'] as num).toInt();
+    if (kIsWeb) {
+      final m = _webCache(entity)..['$id'] = item;
+      return _saveWebCache(entity, m);
+    }
+    await _db!.insert('cache', {'entity': entity, 'id': id, 'data': jsonEncode(item)},
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  static Future<void> remove(String entity, int id) async {
+    if (kIsWeb) {
+      final m = _webCache(entity)..remove('$id');
+      return _saveWebCache(entity, m);
+    }
+    await _db!.delete('cache', where: 'entity = ? AND id = ?', whereArgs: [entity, id]);
+  }
+
+  /// Reemplaza la copia local con la lista del servidor, sin pisar los registros
+  /// que todavía tienen cambios pendientes (creados, editados o borrados sin conexión).
+  static Future<void> replaceAll(String entity, List<Map<String, dynamic>> serverItems) async {
+    final pendingIds = (await listOps()).where((o) => o.entity == entity).map((o) => o.itemId).toSet();
+    final keep = (await readAll(entity)).where((i) => pendingIds.contains((i['id'] as num).toInt())).toList();
+    final fresh = serverItems.where((i) => !pendingIds.contains((i['id'] as num?)?.toInt())).toList();
+    if (kIsWeb) {
+      final m = <String, Map<String, dynamic>>{};
+      for (final i in [...fresh, ...keep]) {
+        m['\${(i['id'] as num).toInt()}'] = i;
+      }
+      return _saveWebCache(entity, m);
+    }
+    await _db!.transaction((txn) async {
+      await txn.delete('cache', where: 'entity = ?', whereArgs: [entity]);
+      for (final i in [...fresh, ...keep]) {
+        await txn.insert('cache', {'entity': entity, 'id': (i['id'] as num).toInt(), 'data': jsonEncode(i)},
+            conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+    });
+  }
+
+  // ---------------------------------------------------------------- cola de pendientes
+  static Future<List<PendingOp>> listOps() async {
+    if (kIsWeb) return _webOps().map(PendingOp.fromMap).toList();
+    final rows = await _db!.query('pending_ops', orderBy: 'seq');
+    return rows.map((r) => PendingOp.fromMap(Map<String, dynamic>.from(r))).toList();
+  }
+
+  static Future<int> countOps() async => (await listOps()).length;
+
+  static Future<void> addOp(String entity, String op, int itemId, Map<String, dynamic>? data) async {
+    if (kIsWeb) {
+      final ops = _webOps();
+      final seq = ops.isEmpty ? 1 : (ops.last['seq'] as num).toInt() + 1;
+      ops.add(PendingOp(seq, entity, op, itemId, data).toMap());
+      return _saveWebOps(ops);
+    }
+    await _db!.insert('pending_ops',
+        {'entity': entity, 'op': op, 'item_id': itemId, 'data': data == null ? null : jsonEncode(data)});
+  }
+
+  static Future<void> removeOp(int seq) async {
+    if (kIsWeb) return _saveWebOps(_webOps()..removeWhere((o) => (o['seq'] as num).toInt() == seq));
+    await _db!.delete('pending_ops', where: 'seq = ?', whereArgs: [seq]);
+  }
+
+  /// Borra todas las operaciones pendientes de un registro (p. ej. se creó y se borró sin conexión).
+  static Future<void> removeOpsOf(String entity, int itemId) async {
+    for (final o in await listOps()) {
+      if (o.entity == entity && o.itemId == itemId) await removeOp(o.seq);
+    }
+  }
+
+  /// Si el registro aún no se envió (id negativo), se actualizan los datos de su "create" pendiente.
+  static Future<bool> updatePendingCreate(String entity, int itemId, Map<String, dynamic> data) async {
+    for (final o in await listOps()) {
+      if (o.entity == entity && o.itemId == itemId && o.op == 'create') {
+        await _replaceOpData(o.seq, data);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  static Future<void> _replaceOpData(int seq, Map<String, dynamic>? data) async {
+    if (kIsWeb) {
+      final ops = _webOps();
+      for (final o in ops) {
+        if ((o['seq'] as num).toInt() == seq) o['data'] = data == null ? null : jsonEncode(data);
+      }
+      return _saveWebOps(ops);
+    }
+    await _db!.update('pending_ops', {'data': data == null ? null : jsonEncode(data)},
+        where: 'seq = ?', whereArgs: [seq]);
+  }
+
+  /// Cuando el backend asigna el id real a un registro creado sin conexión:
+  /// - cambia el id en la copia local y en sus operaciones pendientes, y
+  /// - corrige las claves foráneas (campos "...Id") que apuntaban al id temporal
+  ///   (ej. una Factura creada sin conexión para un Cliente también nuevo).
+  static Future<void> remapId(String entity, int oldId, Map<String, dynamic> saved) async {
+    final newId = (saved['id'] as num).toInt();
+    await remove(entity, oldId);
+    await upsert(entity, saved);
+
+    Map<String, dynamic>? fix(Map<String, dynamic>? d) {
+      if (d == null) return null;
+      var changed = false;
+      final out = Map<String, dynamic>.from(d);
+      out.forEach((k, v) {
+        if (k != 'id' && k.endsWith('Id') && v is num && v.toInt() == oldId) {
+          out[k] = newId;
+          changed = true;
+        }
+      });
+      return changed ? out : null;
+    }
+
+    for (final o in await listOps()) {
+      final fixed = fix(o.data);
+      if (fixed != null) await _replaceOpData(o.seq, fixed);
+      if (o.entity == entity && o.itemId == oldId) {
+        if (kIsWeb) {
+          final ops = _webOps();
+          for (final w in ops) {
+            if ((w['seq'] as num).toInt() == o.seq) w['item_id'] = newId;
+          }
+          await _saveWebOps(ops);
+        } else {
+          await _db!.update('pending_ops', {'item_id': newId}, where: 'seq = ?', whereArgs: [o.seq]);
+        }
+      }
+    }
+    // Claves foráneas en la copia local de las demás listas
+    final entities = kIsWeb
+        ? _prefs!.getKeys().where((k) => k.startsWith('offline_cache_')).map((k) => k.substring(14)).toList()
+        : (await _db!.rawQuery('SELECT DISTINCT entity FROM cache')).map((r) => r['entity'] as String).toList();
+    for (final e in entities) {
+      for (final item in await readAll(e)) {
+        final fixed = fix(item);
+        if (fixed != null) await upsert(e, fixed);
+      }
+    }
+  }
+}
+`;
+}
+
+function generateSyncService(): string {
+  return `import 'dart:async';
+import 'dart:convert';
+import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
+import '../config/api_config.dart';
+import 'local_store.dart';
+import 'offline_http.dart' show prefetchAll;
+
+/// Estado visible del modo sin conexión (lo muestra el aviso superior de la app).
+class SyncState {
+  final bool online;
+  final int pending;
+  final bool syncing;
+  final String? message;
+  const SyncState({this.online = true, this.pending = 0, this.syncing = false, this.message});
+
+  SyncState copyWith({bool? online, int? pending, bool? syncing, String? message}) => SyncState(
+        online: online ?? this.online,
+        pending: pending ?? this.pending,
+        syncing: syncing ?? this.syncing,
+        message: message,
+      );
+}
+
+/// Envía al backend, en orden, los cambios hechos sin conexión.
+/// Se ejecuta al abrir la app, cada 20 s mientras haya pendientes y con el botón "Sincronizar".
+class SyncService {
+  SyncService._();
+  static final SyncService instance = SyncService._();
+
+  final ValueNotifier<SyncState> state = ValueNotifier(const SyncState());
+  Timer? _timer;
+  bool _running = false;
+  bool _prefetching = false;
+  List<String> _entities = const [];
+
+  bool get hasPending => state.value.pending > 0;
+
+  /// [entities]: recursos de la API que se descargan para tenerlos disponibles sin conexión.
+  Future<void> init({List<String> entities = const []}) async {
+    _entities = entities;
+    await LocalStore.init();
+    await refreshCount();
+    _timer?.cancel();
+    _timer = Timer.periodic(const Duration(seconds: 20), (_) => _tick());
+    unawaited(syncNow().then((_) => prefetch()));
+  }
+
+  /// Cada 20 s: si hay pendientes intenta enviarlos; si estaba sin conexión, comprueba si volvió.
+  Future<void> _tick() async {
+    if (_running) return;
+    if (hasPending) {
+      await syncNow();
+    } else if (!state.value.online) {
+      try {
+        final r = await http.get(Uri.parse(ApiConfig.healthCheck())).timeout(const Duration(seconds: 5));
+        if (r.statusCode < 500) markOnline();
+      } catch (_) {
+        // sigue sin conexión
+      }
+    }
+  }
+
+  /// Descarga todas las listas (copia local completa para trabajar sin conexión).
+  Future<void> prefetch() async {
+    if (_prefetching || _entities.isEmpty) return;
+    _prefetching = true;
+    try {
+      await prefetchAll(_entities);
+    } finally {
+      _prefetching = false;
+    }
+  }
+
+  Future<void> refreshCount() async {
+    state.value = state.value.copyWith(pending: await LocalStore.countOps(), message: state.value.message);
+  }
+
+  void markOnline() {
+    if (state.value.online) return;
+    state.value = state.value.copyWith(online: true);
+    // Volvió la conexión: enviar pendientes y refrescar la copia local
+    unawaited(syncNow().then((_) => prefetch()));
+  }
+
+  void markOffline() {
+    if (state.value.online) state.value = state.value.copyWith(online: false);
+  }
+
+  Uri _uri(String entity, [int? id]) => Uri.parse(ApiConfig.endpoint(id == null ? entity : '$entity/$id'));
+
+  /// Devuelve cuántas operaciones se enviaron. Se detiene en cuanto detecta que sigue sin conexión.
+  Future<int> syncNow() async {
+    if (_running) return 0;
+    _running = true;
+    state.value = state.value.copyWith(syncing: true);
+    var sent = 0;
+    final rejected = <String>[];
+    try {
+      for (final op in await LocalStore.listOps()) {
+        http.Response r;
+        try {
+          switch (op.op) {
+            case 'create':
+              final body = Map<String, dynamic>.from(op.data ?? {})..['id'] = null;
+              r = await http
+                  .post(_uri(op.entity), headers: ApiConfig.headers, body: jsonEncode(body))
+                  .timeout(ApiConfig.timeout);
+              break;
+            case 'update':
+              final body = Map<String, dynamic>.from(op.data ?? {})..['id'] = op.itemId;
+              r = await http
+                  .put(_uri(op.entity, op.itemId), headers: ApiConfig.headers, body: jsonEncode(body))
+                  .timeout(ApiConfig.timeout);
+              break;
+            default:
+              r = await http.delete(_uri(op.entity, op.itemId), headers: ApiConfig.headers).timeout(ApiConfig.timeout);
+          }
+        } catch (_) {
+          markOffline(); // sigue sin conexión: se reintenta más tarde, en el mismo orden
+          break;
+        }
+        markOnline();
+        final ok = r.statusCode >= 200 && r.statusCode < 300 || (op.op == 'delete' && r.statusCode == 404);
+        if (ok) {
+          if (op.op == 'create' && r.body.isNotEmpty) {
+            await LocalStore.remapId(op.entity, op.itemId, Map<String, dynamic>.from(jsonDecode(r.body) as Map));
+          }
+          await LocalStore.removeOp(op.seq);
+          sent++;
+        } else {
+          // El servidor rechazó el cambio (ej. 409: la clave foránea ya no existe). Se descarta y se avisa.
+          rejected.add('\${op.op} \${op.entity} (\${r.statusCode})');
+          if (op.op == 'create') await LocalStore.remove(op.entity, op.itemId);
+          await LocalStore.removeOp(op.seq);
+        }
+      }
+    } finally {
+      _running = false;
+      final pending = await LocalStore.countOps();
+      state.value = state.value.copyWith(
+        syncing: false,
+        pending: pending,
+        message: rejected.isNotEmpty
+            ? 'El servidor rechazó: \${rejected.join(', ')}'
+            : (sent > 0 ? '✅ $sent cambio(s) sincronizados' : null),
+      );
+    }
+    return sent;
+  }
+}
+`;
+}
+
+function generateOfflineRepository(): string {
+  return `import 'dart:convert';
+import 'package:http/http.dart' as http;
+import '../config/api_config.dart';
+import 'local_store.dart';
+import 'sync_service.dart';
+
+/// CRUD genérico con soporte sin conexión, usado por todos los servicios.
+///
+/// - Con conexión: habla con el backend y guarda una copia local de lo recibido.
+/// - Sin conexión (no responde el servidor): lee la copia local y guarda los cambios
+///   en la cola de pendientes; SyncService los envía cuando vuelve la conexión.
+/// - Si el servidor responde con error (400, 404, 409...) NO se toma como "sin conexión":
+///   se devuelve null/false para que la pantalla muestre el error.
+class OfflineRepository {
+  OfflineRepository(this.entity);
+
+  /// Ruta del recurso en la API, ej. 'clientes'
+  final String entity;
+
+  SyncService get _sync => SyncService.instance;
+
+  Uri _uri([int? id]) => Uri.parse(ApiConfig.endpoint(id == null ? entity : '$entity/$id'));
+
+  Future<List<Map<String, dynamic>>> getAll() async {
+    if (_sync.hasPending) await _sync.syncNow();
+    try {
+      final r = await http.get(_uri(), headers: ApiConfig.headers).timeout(ApiConfig.timeout);
+      _sync.markOnline();
+      if (r.statusCode == 200) {
+        final list = (jsonDecode(r.body) as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+        await LocalStore.replaceAll(entity, list);
+      }
+    } catch (_) {
+      _sync.markOffline();
+    }
+    return LocalStore.readAll(entity);
+  }
+
+  Future<Map<String, dynamic>?> getById(int id) async {
+    if (id > 0) {
+      try {
+        final r = await http.get(_uri(id), headers: ApiConfig.headers).timeout(ApiConfig.timeout);
+        _sync.markOnline();
+        if (r.statusCode == 200) {
+          final item = Map<String, dynamic>.from(jsonDecode(r.body) as Map);
+          await LocalStore.upsert(entity, item);
+          return item;
+        }
+      } catch (_) {
+        _sync.markOffline();
+      }
+    }
+    return LocalStore.read(entity, id);
+  }
+
+  Future<Map<String, dynamic>?> create(Map<String, dynamic> data) async {
+    final body = Map<String, dynamic>.from(data)..['id'] = null;
+    try {
+      final r = await http
+          .post(_uri(), headers: ApiConfig.headers, body: jsonEncode(body))
+          .timeout(ApiConfig.timeout);
+      _sync.markOnline();
+      if (r.statusCode == 201 || r.statusCode == 200) {
+        final saved = Map<String, dynamic>.from(jsonDecode(r.body) as Map);
+        await LocalStore.upsert(entity, saved);
+        return saved;
+      }
+      return null; // rechazado por el servidor (validación o clave foránea inexistente)
+    } catch (_) {
+      // Sin conexión: se guarda en el celular con un id temporal negativo
+      _sync.markOffline();
+      final local = Map<String, dynamic>.from(data)..['id'] = LocalStore.nextTempId();
+      await LocalStore.upsert(entity, local);
+      await LocalStore.addOp(entity, 'create', local['id'] as int, local);
+      await _sync.refreshCount();
+      return local;
+    }
+  }
+
+  Future<Map<String, dynamic>?> update(int id, Map<String, dynamic> data) async {
+    final item = Map<String, dynamic>.from(data)..['id'] = id;
+    if (id < 0) {
+      // Todavía no existe en el servidor: se corrige su "create" pendiente
+      await LocalStore.upsert(entity, item);
+      await LocalStore.updatePendingCreate(entity, id, item);
+      return item;
+    }
+    try {
+      final r = await http
+          .put(_uri(id), headers: ApiConfig.headers, body: jsonEncode(item))
+          .timeout(ApiConfig.timeout);
+      _sync.markOnline();
+      if (r.statusCode == 200) {
+        final saved = Map<String, dynamic>.from(jsonDecode(r.body) as Map);
+        await LocalStore.upsert(entity, saved);
+        return saved;
+      }
+      return null;
+    } catch (_) {
+      _sync.markOffline();
+      await LocalStore.upsert(entity, item);
+      await LocalStore.addOp(entity, 'update', id, item);
+      await _sync.refreshCount();
+      return item;
+    }
+  }
+
+  Future<bool> delete(int id) async {
+    if (id < 0) {
+      // Se creó y se borra sin haber llegado al servidor: basta con olvidarlo
+      await LocalStore.remove(entity, id);
+      await LocalStore.removeOpsOf(entity, id);
+      await _sync.refreshCount();
+      return true;
+    }
+    try {
+      final r = await http.delete(_uri(id), headers: ApiConfig.headers).timeout(ApiConfig.timeout);
+      _sync.markOnline();
+      if (r.statusCode == 200 || r.statusCode == 204 || r.statusCode == 404) {
+        await LocalStore.remove(entity, id);
+        return true;
+      }
+      return false;
+    } catch (_) {
+      _sync.markOffline();
+      await LocalStore.remove(entity, id);
+      await LocalStore.addOp(entity, 'delete', id, null);
+      await _sync.refreshCount();
+      return true;
+    }
+  }
+
+  Future<bool> checkConnection() async {
+    try {
+      final r = await http
+          .get(Uri.parse(ApiConfig.healthCheck()), headers: ApiConfig.headers)
+          .timeout(const Duration(seconds: 5));
+      return r.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+}
+`;
+}
+
+function generateOfflineHttp(): string {
+  return `import 'dart:convert';
+import 'package:http/http.dart' as real;
+import '../config/api_config.dart';
+import 'offline_repository.dart';
+
+export 'package:http/http.dart' show Response;
+
+/// Reemplazo de \`package:http\` para las pantallas: mismas funciones (get, post, put, delete),
+/// pero cada llamada a la API pasa por OfflineRepository (copia local + cola de pendientes).
+/// Así formularios, listas de selección y detalles también funcionan sin conexión.
+///
+/// Uso en las pantallas:  import '../../offline/offline_http.dart' as http;
+
+final Map<String, OfflineRepository> _repos = {};
+
+/// Separa una URL de la API en (recurso, id). Ej: http://x:8080/facturas/3 -> ('facturas', 3)
+({String entity, int? id})? _route(Uri url) {
+  final base = ApiConfig.baseUrl.endsWith('/') ? ApiConfig.baseUrl : '\${ApiConfig.baseUrl}/';
+  final full = url.replace(query: '').toString().replaceAll(RegExp(r'\\?$'), '');
+  if (!full.startsWith(base)) return null;
+  final parts = full.substring(base.length).split('/').where((p) => p.isNotEmpty).toList();
+  if (parts.isEmpty || parts.length > 2) return null;
+  final id = parts.length == 2 ? int.tryParse(parts[1]) : null;
+  if (parts.length == 2 && id == null) return null;
+  return (entity: parts[0], id: id);
+}
+
+OfflineRepository _repo(String entity) => _repos.putIfAbsent(entity, () => OfflineRepository(entity));
+
+real.Response _json(Object? body, int status) => real.Response.bytes(
+      utf8.encode(body == null ? '' : jsonEncode(body)),
+      status,
+      headers: {'content-type': 'application/json; charset=utf-8'},
+    );
+
+Future<real.Response> get(Uri url, {Map<String, String>? headers}) async {
+  final r = _route(url);
+  if (r == null) return real.get(url, headers: headers);
+  if (r.id == null) return _json(await _repo(r.entity).getAll(), 200);
+  final item = await _repo(r.entity).getById(r.id!);
+  return item == null ? _json({'error': 'No encontrado'}, 404) : _json(item, 200);
+}
+
+Future<real.Response> post(Uri url, {Map<String, String>? headers, Object? body, Encoding? encoding}) async {
+  final r = _route(url);
+  if (r == null || r.id != null) return real.post(url, headers: headers, body: body, encoding: encoding);
+  final saved = await _repo(r.entity).create(Map<String, dynamic>.from(jsonDecode(body as String) as Map));
+  return saved == null ? _json({'error': 'El servidor rechazó el registro'}, 409) : _json(saved, 201);
+}
+
+Future<real.Response> put(Uri url, {Map<String, String>? headers, Object? body, Encoding? encoding}) async {
+  final r = _route(url);
+  if (r == null || r.id == null) return real.put(url, headers: headers, body: body, encoding: encoding);
+  final saved =
+      await _repo(r.entity).update(r.id!, Map<String, dynamic>.from(jsonDecode(body as String) as Map));
+  return saved == null ? _json({'error': 'El servidor rechazó el cambio'}, 409) : _json(saved, 200);
+}
+
+Future<real.Response> delete(Uri url, {Map<String, String>? headers, Object? body, Encoding? encoding}) async {
+  final r = _route(url);
+  if (r == null || r.id == null) return real.delete(url, headers: headers, body: body, encoding: encoding);
+  return await _repo(r.entity).delete(r.id!) ? _json(null, 204) : _json({'error': 'No se pudo eliminar'}, 409);
+}
+
+/// Descarga todas las listas para tenerlas disponibles sin conexión
+/// (se llama al abrir la app y cada vez que vuelve la conexión).
+Future<void> prefetchAll(List<String> entities) async {
+  for (final e in entities) {
+    await _repo(e).getAll();
+  }
+}
+`;
+}
+
+function generateSyncBanner(): string {
+  return `import 'package:flutter/material.dart';
+import '../offline/sync_service.dart';
+
+/// Aviso superior, visible en todas las pantallas:
+/// - Sin conexión: los cambios se guardan en el celular.
+/// - Con cambios pendientes: botón para sincronizar ahora.
+class SyncBanner extends StatelessWidget {
+  const SyncBanner({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    final sync = SyncService.instance;
+    return ValueListenableBuilder<SyncState>(
+      valueListenable: sync.state,
+      builder: (context, s, _) {
+        if (s.online && s.pending == 0 && s.message == null) return const SizedBox.shrink();
+
+        final Color color;
+        final IconData icon;
+        final String text;
+        if (s.syncing) {
+          color = Colors.blue.shade700;
+          icon = Icons.sync;
+          text = 'Sincronizando \${s.pending} cambio(s)…';
+        } else if (!s.online) {
+          color = Colors.orange.shade800;
+          icon = Icons.cloud_off;
+          text = s.pending > 0
+              ? 'Sin conexión · \${s.pending} cambio(s) guardados en el dispositivo'
+              : 'Sin conexión · mostrando los últimos datos guardados';
+        } else if (s.pending > 0) {
+          color = Colors.blue.shade700;
+          icon = Icons.cloud_upload;
+          text = '\${s.pending} cambio(s) pendientes de enviar';
+        } else {
+          color = s.message!.startsWith('✅') ? Colors.green.shade700 : Colors.red.shade700;
+          icon = s.message!.startsWith('✅') ? Icons.cloud_done : Icons.error_outline;
+          text = s.message!;
+        }
+
+        return Material(
+          color: color,
+          child: SafeArea(
+            bottom: false,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              child: Row(
+                children: [
+                  Icon(icon, color: Colors.white, size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(text, style: const TextStyle(color: Colors.white, fontSize: 13)),
+                  ),
+                  if (s.pending > 0 && !s.syncing)
+                    TextButton(
+                      onPressed: () => sync.syncNow(),
+                      child: const Text('Sincronizar', style: TextStyle(color: Colors.white)),
+                    ),
+                  if (s.pending == 0 && s.online && s.message != null)
+                    IconButton(
+                      icon: const Icon(Icons.close, color: Colors.white, size: 18),
+                      onPressed: () => sync.state.value = s.copyWith(message: null),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+`;
+}
+
+// Memoria de Gradle acotada para PCs de 8 GB (flutter create no sobrescribe este archivo)
+function generateGradleProperties(): string {
+  return `org.gradle.jvmargs=-Xmx1536m -XX:MaxMetaspaceSize=512m -XX:ReservedCodeCacheSize=256m
+org.gradle.daemon=false
+kotlin.compiler.execution.strategy=in-process
+android.useAndroidX=true
+# This newDsl flag was added by the Flutter template
+android.newDsl=false
+# This builtInKotlin flag was added by the Flutter template
+android.builtInKotlin=false
+`;
+}
+
 // Genera analysis_options.yaml
 function generateAnalysisOptions(): string {
   return `include: package:flutter_lints/flutter.yaml
@@ -2351,6 +2999,18 @@ La app usa automáticamente el backend del mismo equipo: \`http://localhost:8080
 
 El celular y el PC deben estar en la **misma red wifi**. La IP del PC se ve con \`ipconfig\`
 (Windows, "Dirección IPv4"). Si no conecta, permitir Java en el **Firewall de Windows** (redes privadas).
+
+## Modo sin conexión
+La app sigue funcionando si el backend o la red no están disponibles:
+- Cada lista se guarda en una base **SQLite** del celular (en el navegador, en el almacenamiento local).
+- Sin conexión se puede **ver, crear, editar y eliminar**; los cambios quedan en una **cola de pendientes**.
+- Arriba aparece el aviso **"Sin conexión · N cambios guardados"**. Al volver la conexión se envían
+  solos (cada 20 s) o con el botón **Sincronizar**, en el mismo orden en que se hicieron.
+- Lo creado sin conexión usa un id temporal negativo; al sincronizar se reemplaza por el id real
+  y se corrigen las claves foráneas que lo usaban (ej. una factura de un cliente también nuevo).
+- Si el servidor rechaza un cambio (ej. 409 por una clave foránea inexistente) se descarta y se avisa.
+
+Código en \`lib/offline/\` (local_store, sync_service, offline_repository) y \`lib/widgets/sync_banner.dart\`.
 
 ## Configuración de la API
 Todo está en \`lib/config/api_config.dart\`. Prioridad:
@@ -2398,7 +3058,7 @@ export async function generarFrontend(nodes: NodeType[], edges: EdgeType[], boar
   zip.file('flutter-mvp/README.md', generateReadme());
 
   // Código fuente principal
-  libFolder?.file('main.dart', generateMainDart(classes));
+  libFolder?.file('main.dart', generateMainDart(classes, allClasses));
 
   // Generar modelos para cada clase (incluir asociativas)
   allClasses.forEach(cls => {
@@ -2445,6 +3105,15 @@ export async function generarFrontend(nodes: NodeType[], edges: EdgeType[], boar
   widgetsFolder?.file('sidebar.dart', generateSidebar(classes));
   widgetsFolder?.file('app_drawer.dart', generateAppDrawer(classes));
   widgetsFolder?.file('server_config_dialog.dart', generateServerConfigDialog());
+  widgetsFolder?.file('sync_banner.dart', generateSyncBanner());
+
+  // Modo sin conexión
+  const offlineFolder = libFolder?.folder('offline');
+  offlineFolder?.file('local_store.dart', generateLocalStore());
+  offlineFolder?.file('sync_service.dart', generateSyncService());
+  offlineFolder?.file('offline_repository.dart', generateOfflineRepository());
+  offlineFolder?.file('offline_http.dart', generateOfflineHttp());
+  zip.file('flutter-mvp/android/gradle.properties', generateGradleProperties());
 
   // Android: permiso de internet y conexiones http:// al backend local
   zip.file('flutter-mvp/android/app/src/main/AndroidManifest.xml', generateAndroidManifest());
