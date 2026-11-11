@@ -59,7 +59,8 @@ Probar cada etapa (la app Flutter con emulador/celular; el backend con Postman).
 ## Estado (actualizado 10/11/2026)
 - Paso 1 HECHO: Supabase propio `ffffowrfaulleiqbizxg` (org ProySw1, plan Free). Esquema en `supabase/setup.sql`.
   URL/clave en `uml-board/.env.local` (no se sube; plantilla `.env.example`), leídas en `supabase.config.ts`.
-  La app abre siempre la pizarra id '1' (sembrada en setup.sql); el enlace de invitado no incluye el id (pendiente).
+  La pizarra por defecto es la id '1' (sembrada en setup.sql); el enlace de invitado ya incluye el id
+  (`/board/guest?board=<id>`, hecho por Cinthia, unido a main el 11/11).
 - IA: Gemini gratis vía Edge Function `openai-proxy` (convierte formato OpenAI <-> Gemini nativo, reintentos y
   modelos de respaldo). Secretos en Supabase: `GEMINI_API_KEY`, `GEMINI_MODEL=gemini-3.6-flash`.
   `gemini-3.8-flash` se cuelga en capa gratuita. "Verify JWT" debe estar APAGADO (la clave es sb_publishable).
@@ -83,10 +84,19 @@ Probar cada etapa (la app Flutter con emulador/celular; el backend con Postman).
   Gradle limitado a 1,5 GB en `android/gradle.properties` (PC de 8 GB). Todo unido en `main` el 10/11.
 - Documentación del 2do parcial: `Documentacion/` (no se sube; el .docx base es del Grupo 4). Faltan: arquitectura
   (4 tipos), IA local, desarrollo dirigido por especificación, manual de usuario. Entrega 11/11 8:00; examen 15:15.
+- 11/11: documentación casi terminada. Diagramas hechos en Enterprise Architect sobre una copia del .eapx de los
+  compañeros (`Documentacion/Diagramas_2doParcial.eapx`); manual de usuario aparte basado en el de Klaus, con capturas
+  de la interfaz actual y del celular. QR del repo, del Word y de la carpeta de Drive "Examen parcial de SW" en
+  `Documentacion/`. La carpeta `Documentacion/` está en .gitignore: nunca se sube.
+- Paso 4 (offline Flutter) HECHO por Ricardo y probado en el Redmi (proyecto `backend-demo\abogado`, backend en
+  Docker puerto 8082 + `adb reverse tcp:8080 tcp:8082`). Cinthia hizo otra versión del offline; al unir el 11/11 se
+  conservó la de Ricardo y se descartaron sus plantillas `templates/flutter/*.dart` y su guía de prueba.
+- **IA local: la hace Cinthia** (el PC de Ricardo no tiene memoria suficiente). Ya existe el selector de motor
+  Nube (Gemini) / Local (Ollama) en `AiProviderPanel.tsx` / `lib/aiClient.ts`; falta montar y probar el modelo local.
 
 ## Trabajo en equipo (ramas)
 - Compañera colaboradora: Cinthia (GitHub `Capi03`), trabaja en la rama `cinthia` (pasos 2 y 3: mover clases con IA,
-  vista ER + SQL, mejoras visuales). Ricardo trabaja en la rama `ricardo` (generadores, Flutter, offline = paso 4).
+  vista ER + SQL, mejoras visuales, y ahora la IA local). Ricardo trabaja en la rama `ricardo` (generadores, Flutter, offline = paso 4).
 - **Nunca unir a `main` sin orden explícita de Ricardo**, y él la da solo cuando Cinthia confirme que todo está OK.
 - Al unir: conservar el `currentUser.ts` de `ricardo` (nombre por pestaña con sessionStorage); la versión de
   `cinthia` fue reescrita porque el archivo faltaba en el repo (lo excluía la regla `lib/` del .gitignore).
