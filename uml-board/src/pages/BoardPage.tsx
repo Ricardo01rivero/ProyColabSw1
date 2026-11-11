@@ -794,8 +794,9 @@ const BoardPage = ({ mode = 'host' }: { mode?: 'host' | 'guest' }) => {
       return;
     }
 
-    if (file.size > 5 * 1024 * 1024) {
-      alert('❌ El archivo debe ser menor a 5MB');
+    // Las fotos grandes (celular) se reducen automáticamente en el servicio antes de subirlas
+    if (file.size > 25 * 1024 * 1024) {
+      alert('❌ El archivo debe ser menor a 25MB');
       return;
     }
 
@@ -876,7 +877,8 @@ const BoardPage = ({ mode = 'host' }: { mode?: 'host' | 'guest' }) => {
           `✅ Importación exitosa: ${importedNodes.length} clases, ${importedEdges.length} relaciones`
         );
         alert(
-          `✅ Diagrama importado exitosamente!\n${importedNodes.length} clases y ${importedEdges.length} relaciones agregadas`
+          `✅ Diagrama importado exitosamente!\n${importedNodes.length} clases y ${importedEdges.length} relaciones agregadas` +
+            (result.summary ? `\n\n${result.summary}` : '')
         );
 
         // Ajustar vista para mostrar todo el contenido

@@ -330,20 +330,41 @@ export const initialBoards: BoardType[] = [
 
 // Solo tipos y constantes, sin lógica de UI ni lógica de negocio
 
+/** Une las palabras en estilo camello, sin tildes ni caracteres inválidos para Java/Dart. */
+function toIdentifierWords(name: string): string {
+  const parts = name
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '') // quita tildes: Categoría -> Categoria
+    .replace(/ñ/g, 'n')
+    .replace(/Ñ/g, 'N')
+    .replace(/[^A-Za-z0-9]+/g, ' ') // espacios, guiones, puntos, etc. separan palabras
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  const joined = parts
+    .map((p, i) => (i === 0 ? p : p.charAt(0).toUpperCase() + p.slice(1)))
+    .join('');
+  // Un identificador no puede empezar con número
+  return /^[0-9]/.test(joined) ? `x${joined}` : joined;
+}
+
 /**
- * Normaliza los nombres de atributos para los generadores de código:
- * sin espacios y con minúscula inicial (Nombre -> nombre, "Fecha Nac" -> fechaNac).
- * Así coinciden el campo Java, el JSON de la API, Postman y el modelo Flutter.
+ * Normaliza nombres para los generadores de código:
+ * - Clases en PascalCase sin espacios ni tildes ("Personal Sanitario" -> PersonalSanitario).
+ * - Atributos en camelCase con minúscula inicial (Nombre -> nombre, "Fecha Nac" -> fechaNac).
+ * Así coinciden la clase/campo Java, el JSON de la API, Postman y el modelo Flutter.
+ * Las relaciones usan ids de nodo, así que renombrar etiquetas no las rompe.
  */
 export function normalizeAttributeNamesForCode(nodes: NodeType[]): NodeType[] {
-  return nodes.map(n => ({
-    ...n,
-    attributes: (n.attributes || []).map(a => {
-      const parts = a.name.trim().split(/[\s_-]+/).filter(Boolean);
-      const camel = parts
-        .map((p, i) => (i === 0 ? p : p.charAt(0).toUpperCase() + p.slice(1)))
-        .join('');
-      return { ...a, name: camel.charAt(0).toLowerCase() + camel.slice(1) };
-    }),
-  }));
+  return nodes.map(n => {
+    const cls = toIdentifierWords(n.label || '') || 'Clase';
+    return {
+      ...n,
+      label: cls.charAt(0).toUpperCase() + cls.slice(1),
+      attributes: (n.attributes || []).map(a => {
+        const camel = toIdentifierWords(a.name || '') || 'campo';
+        return { ...a, name: camel.charAt(0).toLowerCase() + camel.slice(1) };
+      }),
+    };
+  });
 }

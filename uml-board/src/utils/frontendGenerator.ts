@@ -347,16 +347,26 @@ function generateModelForClass(cls: NodeType, nodes: NodeType[], edges: EdgeType
 
   const fromJsonFields = allFields
     .map(field => {
-      if (field === 'id') return "      id: json['id'] as int";
+      // Lectura tolerante: un valor null o de otro tipo numérico no debe
+      // romper toda la lista (antes un solo registro incompleto la vaciaba).
+      if (field === 'id') return "      id: (json['id'] as num?)?.toInt() ?? 0";
       const fieldInfo = fieldInfoMap.get(field);
       if (fieldInfo?.isAttribute && fieldInfo.attr) {
         const dartType = mapDartType(fieldInfo.attr.datatype);
-        if (dartType === 'DateTime') {
-          return `      ${field}: DateTime.parse(json['${field}'] as String)`;
+        switch (dartType) {
+          case 'DateTime':
+            return `      ${field}: DateTime.tryParse(json['${field}']?.toString() ?? '') ?? DateTime.now()`;
+          case 'int':
+            return `      ${field}: (json['${field}'] as num?)?.toInt() ?? 0`;
+          case 'double':
+            return `      ${field}: (json['${field}'] as num?)?.toDouble() ?? 0.0`;
+          case 'bool':
+            return `      ${field}: json['${field}'] == true`;
+          default:
+            return `      ${field}: json['${field}']?.toString() ?? ''`;
         }
-        return `      ${field}: json['${field}'] as ${dartType}`;
       }
-      return `      ${field}: json['${field}'] as int?`;
+      return `      ${field}: (json['${field}'] as num?)?.toInt()`;
     })
     .join(',\n');
 

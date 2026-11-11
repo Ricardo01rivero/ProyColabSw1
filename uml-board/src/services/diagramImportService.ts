@@ -7,10 +7,14 @@ import { supabase, OPENAI_PROXY_URL, SUPABASE_ANON_KEY } from '../lib/supabase.c
 // Tipos para el análisis OpenAI
 type OpenAIClass = {
   name: string;
+  /** Clase de asociación: las dos clases cuya línea la sostiene */
+  associationOf?: string[];
   attributes: Array<{
     name: string;
     type: string;
     visibility: 'public' | 'private' | 'protected';
+    /** Agregado por la IA (no estaba en el dibujo) */
+    inferred?: boolean;
   }>;
   methods: Array<{
     name: string;
@@ -26,11 +30,14 @@ type OpenAIRelationship = {
   target: string;
   sourceMultiplicity?: string; // Multiplicidad en el extremo source
   targetMultiplicity?: string; // Multiplicidad en el extremo target
+  inferred?: boolean; // tipo o multiplicidad deducidos por la IA
 };
 
 type OpenAIResponse = {
+  domain?: string;
   classes: OpenAIClass[];
   relationships: OpenAIRelationship[];
+  notes?: string[];
 };
 
 type AnalysisResult = {
@@ -39,19 +46,86 @@ type AnalysisResult = {
   edges?: EdgeType[];
   error?: string;
   cost?: number;
+  /** Resumen legible: de qué trata el diagrama y qué completó la IA */
+  summary?: string;
 };
+
+/** Arma el resumen para el usuario separando lo leído del dibujo de lo deducido por la IA. */
+function buildImportSummary(data: OpenAIResponse): string {
+  const lines: string[] = [];
+  if (data.domain) lines.push(`📌 Tema detectado: ${data.domain}`);
+
+  const inferredAttrs = (data.classes || [])
+    .map(c => ({
+      name: c.name,
+      attrs: (c.attributes || []).filter(a => a?.inferred).map(a => a.name),
+    }))
+    .filter(c => c.attrs.length > 0);
+  if (inferredAttrs.length) {
+    lines.push('', '💡 Atributos SUGERIDOS por la IA (no estaban en el dibujo):');
+    inferredAttrs.forEach(c => lines.push(`   • ${c.name}: ${c.attrs.join(', ')}`));
+  }
+
+  const inferredRels = (data.relationships || []).filter(r => r?.inferred);
+  if (inferredRels.length) {
+    lines.push('', '🔗 Relaciones DEDUCIDAS (tipo o multiplicidad no legible):');
+    inferredRels.forEach(r => lines.push(`   • ${r.source} → ${r.target} (${r.type})`));
+  }
+
+  const notes = (data.notes || []).filter(Boolean).slice(0, 5);
+  if (notes.length) {
+    lines.push('', '📝 Notas de la IA:');
+    notes.forEach(n => lines.push(`   • ${n}`));
+  }
+
+  if (inferredAttrs.length || inferredRels.length) {
+    lines.push('', 'Revísalos en la pizarra o pregúntale a la IA Dev Senior en el chat si son correctos.');
+  }
+  return lines.join('\n');
+}
 
 /**
  * Convierte la respuesta de OpenAI al formato esperado por umlConstants
  */
-function convertOpenAIToUMLConstants(openaiData: OpenAIResponse): {
+export function convertOpenAIToUMLConstants(openaiData: OpenAIResponse): {
   nodes: NodeType[];
   edges: EdgeType[];
 } {
   const nodes: NodeType[] = [];
   const edges: EdgeType[] = [];
 
-  console.log('� Creando nodos...');
+  // Saneamiento: nombres sin espacios sobrantes y sin clases repetidas
+  const seenNames = new Set<string>();
+  openaiData.classes = (openaiData.classes || [])
+    .map(c => ({ ...c, name: (c.name || '').trim(), attributes: c.attributes || [] }))
+    .filter(c => c.name && !seenNames.has(c.name) && seenNames.add(c.name));
+  const classNames = new Set(openaiData.classes.map(c => c.name));
+  openaiData.relationships = (openaiData.relationships || []).filter(
+    r => classNames.has(r.source) && classNames.has(r.target) && r.source !== r.target
+  );
+
+  // CLASES DE ASOCIACIÓN indicadas por la IA (rectángulo colgado de la línea A—B):
+  // se modelan como tabla intermedia A -> C <- B, sin relación directa A—B.
+  const associationByAI = new Set<string>();
+  openaiData.classes.forEach(cls => {
+    const pair = cls.associationOf;
+    if (!Array.isArray(pair) || pair.length !== 2) return;
+    const [a, b] = pair;
+    if (a === b || !classNames.has(a) || !classNames.has(b) || a === cls.name || b === cls.name) return;
+    associationByAI.add(cls.name);
+    openaiData.relationships = openaiData.relationships.filter(
+      r =>
+        !((r.source === a && r.target === b) || (r.source === b && r.target === a)) &&
+        !([a, b].includes(r.source) && r.target === cls.name) &&
+        !([a, b].includes(r.target) && r.source === cls.name)
+    );
+    openaiData.relationships.push(
+      { type: 'association', source: a, target: cls.name, sourceMultiplicity: '1', targetMultiplicity: '*' },
+      { type: 'association', source: b, target: cls.name, sourceMultiplicity: '1', targetMultiplicity: '*' }
+    );
+  });
+
+  console.log('🧱 Creando nodos...');
 
   // Crear nodos
   const startX = 100;
@@ -74,9 +148,9 @@ function convertOpenAIToUMLConstants(openaiData: OpenAIResponse): {
       label: cls.name,
       x: startX + col * spacingX,
       y: startY + row * spacingY,
-      // Filtrar atributos 'id' ya que se asumen implícitamente
+      // Filtrar el identificador (id, id_socio, idCuota...) ya que el sistema lo agrega
       attributes: cls.attributes
-        .filter(attr => attr.name.toLowerCase() !== 'id')
+        .filter(attr => attr?.name && !/^id([\s_-]|[A-Z]|$)/.test(attr.name.trim()) && attr.name.trim().toLowerCase() !== 'id')
         .map(attr => ({
           name: attr.name,
           scope: (attr.visibility as 'public' | 'private' | 'protected') || 'private', // Default a 'private' si no se especifica
@@ -293,7 +367,7 @@ function convertOpenAIToUMLConstants(openaiData: OpenAIResponse): {
     ].some(word => candidateName.toLowerCase().includes(word));
 
     // PASO 3: Solo procesar si tiene nombre típico de tabla intermedia
-    if (!isDetalleEntity && !isIntermediaEntity) {
+    if (!isDetalleEntity && !isIntermediaEntity && !associationByAI.has(candidateName)) {
       console.log(`   ❌ No es tabla intermedia: "${candidateName}" no tiene patrón típico`);
       return; // Saltar este candidato
     }
@@ -561,29 +635,34 @@ function mapOpenAIRelationType(
  */
 function parseSingleMultiplicity(mult?: string): '1' | '*' {
   if (!mult) return '1';
-  
-  const m = mult.toLowerCase().trim();
-  
-  // Detectar multiplicidades múltiples
-  if (m === '*' || m === '0..*' || m === '1..*' || m.includes('many') || m.includes('n')) {
-    return '*';
-  }
-  
-  // Casos específicos 1
-  if (m === '1' || m === '1..1' || m === '0..1') {
-    return '1';
-  }
-  
-  // Por defecto uno
-  return '1';
+
+  const m = mult.toLowerCase().replace(/\s+/g, '');
+  if (m.includes('many') || m.includes('muchos')) return '*';
+
+  // Se decide por el límite superior: "0..*", "1..*", "*", "n", "2..5" -> muchos; "1", "0..1", "1..1" -> uno.
+  // En notaciones invertidas a mano como "*..1" se toma el valor más grande.
+  const bounds = m.split('..').filter(Boolean);
+  const isMany = (b: string) => b === '*' || b === 'n' || b === 'm' || (/^\d+$/.test(b) && Number(b) > 1);
+  return bounds.some(isMany) ? '*' : '1';
 }
 
 /**
  * Corrige la direccionalidad de relaciones basándose en patrones semánticos universales
  */
 function correctRelationshipDirection(rel: OpenAIRelationship): OpenAIRelationship {
+  // Herencia, composición y agregación ya traen su dirección del dibujo (triángulo / rombo): no tocarlas.
+  if (rel.type && rel.type.toLowerCase() !== 'association') return rel;
+
   const source = rel.source.toLowerCase();
   const target = rel.target.toLowerCase();
+  // Invertir la dirección también intercambia las multiplicidades (si no, se corrompe la cardinalidad)
+  const invert = (r: OpenAIRelationship): OpenAIRelationship => ({
+    ...r,
+    source: r.target,
+    target: r.source,
+    sourceMultiplicity: r.targetMultiplicity,
+    targetMultiplicity: r.sourceMultiplicity,
+  });
 
   console.log(`🔍 Evaluando relación: ${rel.source} → ${rel.target}`);
 
@@ -640,44 +719,12 @@ function correctRelationshipDirection(rel: OpenAIRelationship): OpenAIRelationsh
     } else if (reverseSourceMatches && reverseTargetMatches) {
       // Dirección invertida - corregir
       console.log(`   🔄 Patrón ${pattern.name}: invirtiendo dirección (${pattern.reason})`);
-      return {
-        ...rel,
-        source: rel.target,
-        target: rel.source,
-      };
+      return invert(rel);
     }
   }
 
-  // ANÁLISIS HEURÍSTICO ADICIONAL para casos no cubiertos por patrones específicos
-
-  // Heurística 1: Nombres más generales → Nombres más específicos
-  if (source.length < target.length && target.includes(source)) {
-    console.log(
-      `   🔄 Heurística especificidad: ${rel.source} → ${rel.target} INVERTIDA (entidad general → específica)`
-    );
-    return {
-      ...rel,
-      source: rel.target,
-      target: rel.source,
-    };
-  }
-
-  // Heurística 2: Entidades singulares → Entidades plurales (si detectables)
-  const sourceIsPlural = source.endsWith('s') || source.endsWith('es');
-  const targetIsPlural = target.endsWith('s') || target.endsWith('es');
-
-  if (!sourceIsPlural && targetIsPlural) {
-    console.log(
-      `   🔄 Heurística cardinalidad: ${rel.source} → ${rel.target} INVERTIDA (singular → plural)`
-    );
-    return {
-      ...rel,
-      source: rel.target,
-      target: rel.source,
-    };
-  }
-
-  // Si no hay corrección aplicable, mantener como está
+  // Sin heurísticas por nombre (singular/plural, etc.): en español fallaban ("Envios", "Socios")
+  // y la dirección de una asociación no cambia su significado si se respetan las multiplicidades.
   console.log(`   ➡️ Sin corrección aplicable: manteniendo ${rel.source} → ${rel.target}`);
   return rel;
 }
@@ -685,11 +732,47 @@ function correctRelationshipDirection(rel: OpenAIRelationship): OpenAIRelationsh
 /**
  * Sube una imagen a Supabase y retorna la URL pública
  */
-async function uploadImageToSupabase(file: File): Promise<string> {
+/**
+ * Reduce fotos grandes (celular: 4000px y 5-12 MB) a máx. 2000px en JPEG.
+ * La IA lee igual de bien y la subida/análisis es mucho más rápido. createImageBitmap
+ * respeta la orientación EXIF, así que una foto vertical no queda acostada.
+ */
+async function prepareImage(file: File): Promise<File> {
+  const MAX_SIDE = 2000;
+  if (!file.type.startsWith('image/') || file.type === 'image/gif') return file;
+  try {
+    const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' } as ImageBitmapOptions);
+    const scale = Math.min(1, MAX_SIDE / Math.max(bitmap.width, bitmap.height));
+    if (scale === 1 && file.size <= 2 * 1024 * 1024) {
+      bitmap.close();
+      return file;
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return file;
+    ctx.fillStyle = '#ffffff'; // fondo blanco para PNG con transparencia
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+    const blob = await new Promise<Blob | null>(res => canvas.toBlob(res, 'image/jpeg', 0.88));
+    if (!blob) return file;
+    console.log(
+      `🗜️ Imagen reducida: ${(file.size / 1024 / 1024).toFixed(2)} MB -> ${(blob.size / 1024 / 1024).toFixed(2)} MB`
+    );
+    return new File([blob], file.name.replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg' });
+  } catch {
+    return file; // si el navegador no puede procesarla, se envía tal cual
+  }
+}
+
+async function uploadImageToSupabase(original: File): Promise<string> {
   // Validar archivo
-  if (!file.type.startsWith('image/')) {
+  if (!original.type.startsWith('image/')) {
     throw new Error('Solo se permiten archivos de imagen');
   }
+  const file = await prepareImage(original);
 
   if (file.size > 5 * 1024 * 1024) {
     throw new Error('El archivo debe ser menor a 5MB');
@@ -719,263 +802,76 @@ async function uploadImageToSupabase(file: File): Promise<string> {
  * Analiza una imagen usando OpenAI Vision API
  */
 async function analyzeImageWithOpenAI(imageUrl: string): Promise<OpenAIResponse> {
-  const prompt = `Analiza este diagrama de clases UML y extrae ÚNICAMENTE la estructura en formato JSON válido.
+  const prompt = `Eres un experto en UML 2.5. La imagen es un DIAGRAMA DE CLASES que puede estar dibujado A MANO
+(cuaderno, hoja o pizarra con marcadores), fotografiado torcido, girado 90°/180°, con sombras, reflejos o letra difícil.
+Tu tarea es transcribirlo FIELMENTE a JSON. RESPONDE SOLO CON EL JSON, sin texto adicional ni bloques de código.
 
-RESPONDE SOLO CON EL JSON, sin explicaciones adicionales.
+PASO 1 - ORIENTACIÓN Y LECTURA
+- Si la imagen está girada, léela mentalmente en la orientación correcta.
+- Cada CLASE es un rectángulo con el NOMBRE en el primer compartimento y los ATRIBUTOS en el segundo.
+- Lee la letra a mano con cuidado; corrige solo errores ortográficos evidentes (ej: "Matenimiento" -> "Mantenimiento").
+- NO inventes clases, atributos ni relaciones que no estén dibujados. NO omitas ninguno que sí esté.
 
-INSTRUCCIONES CRÍTICAS PARA RELACIONES M:N:
-- EXAMINA CUIDADOSAMENTE TODAS LAS LÍNEAS del diagrama
-- DETECTA TODAS las relaciones, especialmente relaciones muchos-a-muchos (M:N)
-- IDENTIFICA tablas intermedias/asociativas que conectan entidades principales
-- NO incluyas atributos "id" en las clases, se asumen implícitamente
-- Para multiplicidades usa formato exacto: "1", "*", "0..*", "1..*"
+PASO 2 - NOMBRES
+- Clases: PascalCase, en singular si el autor no insiste en plural, sin espacios ni tildes ni guiones bajos
+  ("Personal Sanitario" -> "PersonalSanitario", "Tipo_Cuota" -> "TipoCuota", "Envíos" -> "Envio").
+- Atributos: camelCase sin tildes ("fecha salida" -> "fechaSalida", "importe_anual" -> "importeAnual").
+- OMITE el atributo identificador de cada clase: "id", "ID", "id_xxx", "idXxx", "cod" o "codigo" cuando es claramente
+  la clave (el sistema agrega "id" automáticamente). Conserva los demás atributos aunque parezcan códigos de negocio.
+- Tipos (infiere por el nombre si no está escrito): fecha/hora -> "Date"; precio, costo, total, monto, importe,
+  sueldo, area, peso, presupuesto -> "Float"; cantidad, nro, numero, edad, stock, capacidad, consumo -> "Integer";
+  activo/estado booleano -> "Boolean"; lo demás -> "String". Visibilidad: "+" public, "#" protected, si no "private".
 
-⚠️ ANÁLISIS OBLIGATORIO DE CADA TABLA INTERMEDIA:
-Para CADA entidad que empiece con "Detalle" (DetalleVenta, DetalleCompra, etc.):
-1. BUSCA TODAS las líneas que conectan con esa entidad
-2. VERIFICA que tenga conexiones a EXACTAMENTE 2 entidades principales
-3. SI ves solo 1 conexión, BUSCA MÁS CUIDADOSAMENTE la segunda línea
-4. EJEMPLO: DetalleCompra debe conectar con Compra Y con Producto
+PASO 3 - RELACIONES (revisa CADA línea que toque un rectángulo)
+- Línea simple -> "association".
+- Triángulo vacío en un extremo -> "inheritance": source = clase HIJA (sin triángulo), target = clase PADRE
+  (donde está el triángulo). Varias hijas pueden compartir el mismo triángulo: crea una relación por cada hija.
+- Rombo relleno -> "composition"; rombo vacío -> "aggregation": source = clase con el rombo (el todo), target = la parte.
+- Multiplicidades: copia lo escrito junto a cada extremo ("1", "*", "0..*", "1..*", "0..1", "1..1", "*..1").
+  sourceMultiplicity es lo escrito junto a la clase source y targetMultiplicity lo escrito junto a la target.
+  Si no hay nada escrito usa "1".
+- Ignora los nombres/verbos de las relaciones ("realiza", "pertenece", "tiene"), flechas de navegación, palomitas,
+  restricciones como {disjunta, completa} y notas.
 
-ANÁLISIS SISTEMÁTICO REQUERIDO:
-1. IDENTIFICA todas las clases/entidades en el diagrama
-2. DETECTA qué entidades son principales vs intermedias/asociativas
-3. ENCUENTRA todas las líneas que conectan clases (no omitas ninguna línea, por pequeña que sea)
-4. DETERMINA multiplicidades de cada relación con precisión
-5. CLASIFICA cada relación según su tipo UML
-6. VERIFICA que cada línea visible se convierta en una relación en el JSON
+PASO 4 - CLASES DE ASOCIACIÓN (muy común en estos diagramas)
+- Una clase de asociación es un rectángulo unido con una línea (a veces punteada) al MEDIO de la línea que une
+  otras dos clases A y B. Inclúyela en "classes" con "associationOf": ["A", "B"] y NO generes relaciones para ella
+  (el sistema crea las claves foráneas a A y B).
+- Si ese rectángulo NO tiene nombre, nómbralo uniendo los nombres de A y B (ej: "AutobusParada") y conserva sus
+  atributos si los tiene.
+- Un rectángulo vacío y sin nombre que NO está unido a ninguna línea es un borrador: ignóralo.
 
-⚠️ INSTRUCCIÓN CRÍTICA: EXAMINA CADA LÍNEA DEL DIAGRAMA
-- Busca líneas sólidas que conecten cajas de entidades
-- Incluye líneas cortas, largas, horizontales, verticales, diagonales
-- No omitas líneas que parezcan menos prominentes visualmente
-- Cada línea visible debe resultar en una relación en el JSON
-- Si ves una caja conectada a otra caja, debe existir una relación
+PASO 5 - ENTENDER EL DOMINIO Y COMPLETAR (como lo haría un analista)
+- Deduce de qué trata el sistema (ej: "ONG de envíos humanitarios con sedes, socios y voluntarios") y ponlo en "domain".
+- Si una clase quedó SIN atributos (vacía en el dibujo o ilegible), agrégale de 2 a 4 atributos OBVIOS para ese
+  dominio (ej: Medicamento -> nombre, dosis, fechaVencimiento) y marca cada uno con "inferred": true.
+  Si la clase tiene atributos legibles, NO le agregues más. Las subclases de una herencia pueden quedar con 1-2
+  atributos propios que las distingan de la clase padre.
+- Si una línea existe pero su tipo o sus multiplicidades no se leen, dedúcelos por el sentido del dominio
+  (ej: varias clases "tipo de" conectadas a una clase general -> "inheritance"; Cliente-Factura -> 1 a *)
+  y marca la relación con "inferred": true. Lo que SÍ se lee del dibujo nunca se cambia.
+- NO agregues clases ni relaciones que no estén dibujadas.
+- En "notes" explica en frases cortas (en español) lo que dedujiste y por qué.
 
-DETECCIÓN ESPECIAL DE RELACIONES M:N:
-Las relaciones muchos-a-muchos se pueden representar de 2 formas:
-A) LÍNEA DIRECTA con multiplicidad * en ambos lados
-B) VÍA TABLA INTERMEDIA: EntidadA → TablaIntermedia ← EntidadB
-
-REGLA CRÍTICA PARA TABLAS INTERMEDIAS:
-- Si ves una entidad con nombre como "Detalle[Algo]", "Intermedia", etc.
-- Esa entidad debe estar conectada a EXACTAMENTE 2 entidades principales
-- CADA conexión debe tener multiplicidad * (muchos)
-- EJEMPLO: DetalleVenta debe conectar con Venta Y con Producto
-- EJEMPLO: DetalleCompra debe conectar con Compra Y con Producto
-
-PARA CADA TABLA INTERMEDIA DETECTADA, crear 2 relaciones:
-- EntidadPrincipal1 → TablaIntermedia (multiplicidad 1..*)
-- EntidadPrincipal2 → TablaIntermedia (multiplicidad 1..*)
-- NO crear relación directa entre EntidadPrincipal1 y EntidadPrincipal2
-
-NOMBRES TÍPICOS DE TABLAS INTERMEDIAS:
-- Detalle + NombreEntidad: "DetalleVenta", "DetalleCompra", "DetallePedido"
-- Nombres compuestos: "EstudianteCurso", "UsuarioRol", "ProductoCategoria"
-- Palabras clave: "intermedia", "relacion", "inscripcion", "asociacion"
-
-CRITERIOS DE CLASIFICACIÓN:
-- ENTIDAD PRINCIPAL: Tiene atributos de negocio significativos, puede existir independientemente
-- TABLA INTERMEDIA: Principalmente contiene claves foráneas + algunos atributos adicionales
-
-PATRONES DE RELACIONES Y DETECCIÓN VISUAL:
-
-⚠️ CRUCIAL: IDENTIFICAR TIPO DE RELACIÓN POR ELEMENTOS VISUALES:
-
-1. **ASOCIACIÓN** (type: "association"):
-   - Línea simple/recta entre entidades
-   - Sin símbolos especiales en los extremos
-   - Puede tener multiplicidad (1, *, 1..*, 0..*)
-   - Es el tipo MÁS COMÚN en diagramas de clases
-
-2. **HERENCIA/GENERALIZACIÓN** (type: "inheritance"):
-   - Línea con FLECHA CON TRIÁNGULO VACÍO (hueco) ►
-   - El triángulo apunta hacia la clase padre/superclase
-   - Representa relación "es-un" (is-a)
-   - Ejemplos: Persona ← Empleado, Vehiculo ← Auto
-
-3. **COMPOSICIÓN** (type: "composition"):
-   - Línea con ROMBO NEGRO/RELLENO ♦ en un extremo
-   - Relación "parte-de" FUERTE (si se elimina el todo, se eliminan las partes)
-   - ⚠️ CRÍTICO: El rombo está en la clase CONTENEDORA (el TODO)
-   - ⚠️ DIRECCIÓN: Contenedor ♦──→ Parte (el rombo va en el contenedor)
-   - Ejemplos: Casa ♦─→ Habitación, Auto ♦─→ Motor
-   - source = clase con rombo (contenedor), target = clase contenida (parte)
-
-4. **AGREGACIÓN** (type: "aggregation"):
-   - Línea con ROMBO BLANCO/VACÍO ◊ en un extremo
-   - Relación "parte-de" DÉBIL (las partes pueden existir independientemente)
-   - ⚠️ CRÍTICO: El rombo está en la clase CONTENEDORA (el TODO)
-   - ⚠️ DIRECCIÓN: Contenedor ◊──→ Elemento (el rombo va en el contenedor)
-   - Ejemplos: Universidad ◊─→ Estudiante, Equipo ◊─→ Jugador
-   - source = clase con rombo (contenedor), target = clase contenida (elemento)
-
-INSTRUCCIONES CRÍTICAS PARA DETECCIÓN:
-- EXAMINA CUIDADOSAMENTE los extremos de cada línea
-- BUSCA símbolos específicos: triángulos (►), rombos rellenos (♦), rombos vacíos (◊)
-- Si NO VES ningún símbolo especial → type: "association"
-- Si VES triángulo vacío/hueco → type: "inheritance" 
-- Si VES rombo negro/relleno → type: "composition"
-- Si VES rombo blanco/vacío → type: "aggregation"
-
-EJEMPLOS VISUALES A BUSCAR:
-- ASOCIACIÓN: ClaseA ------0..*------ ClaseB (línea simple)
-- HERENCIA: ClasePadre <──── ClaseHija (triángulo vacío apunta al padre)
-- COMPOSICIÓN: Contenedor ♦──→ Parte (rombo RELLENO en contenedor)
-- AGREGACIÓN: Contenedor ◊──→ Elemento (rombo VACÍO en contenedor)
-
-⚠️ INSTRUCCIÓN CRÍTICA PARA COMPOSICIÓN Y AGREGACIÓN:
-- IDENTIFICA qué lado tiene el rombo (♦ o ◊)
-- La clase con el rombo ES EL SOURCE (contenedor/todo)
-- La clase SIN rombo ES EL TARGET (parte/elemento)
-- Ejemplo: Si ves "Categoría ◊────── Producto", entonces:
-  * source = "Categoría" (tiene el rombo)
-  * target = "Producto" (sin rombo)
-  * type = "aggregation"
-
-⚠️ INSTRUCCIÓN CRÍTICA PARA MULTIPLICIDADES:
-- Lee EXACTAMENTE las multiplicidades escritas en cada extremo de la línea
-- "0..*" = muchos (usa "0..*" en el JSON)
-- "1..*" = uno o más (usa "1..*" en el JSON)
-- "*" = muchos (usa "*" en el JSON)
-- "1" = uno exactamente (usa "1" en el JSON)
-- "0..1" = cero o uno (usa "0..1" en el JSON)
-- NO ASUMAS multiplicidades, LÉELAS del diagrama
-
-EJEMPLOS DE MULTIPLICIDADES:
-- Producto 0..*──────1 Categoría → {source: "Producto", target: "Categoría", multiplicity: "0..*"}
-- Venta 1──────* DetalleVenta → {source: "Venta", target: "DetalleVenta", multiplicity: "1..*"}
-- Cliente 1──────0..* Pedido → {source: "Cliente", target: "Pedido", multiplicity: "0..*"}
-
-REGLAS DE MAPEO:
-- Línea simple sin símbolos = "association"
-- Flecha con triángulo = "inheritance" 
-- Rombo negro/relleno = "composition"
-- Rombo blanco/vacío = "aggregation"
-- En caso de duda = "association" (más seguro)
-
-REGLAS CRÍTICAS PARA RELACIONES Y DIRECCIONALIDAD:
-- NUNCA crear relaciones bidireccionales duplicadas (A→B y B→A)
-- Cada línea del diagrama = UNA relación en el JSON
-- Para relaciones M:N intermedias: crear solo A→Intermedia y B→Intermedia (NO Intermedia→A ni Intermedia→B)
-- Direccionalidad: seguir la lógica semántica universal:
-
-PATRONES UNIVERSALES DE DIRECCIONALIDAD:
-1. CLASIFICACIÓN: Clasificador → Clasificado
-   * Ejemplos: Categoría → Producto, Tipo → Item, Clase → Elemento
-   
-2. AGREGACIÓN: Contenedor → Contenido  
-   * Ejemplos: Pedido → Detalle, Factura → Item, Proyecto → Tarea
-   
-3. JERARQUÍA: Superior → Subordinado
-   * Ejemplos: Empresa → Empleado, Departamento → Usuario
-   
-4. TEMPORALIDAD: Actor → Acción
-   * Ejemplos: Cliente → Venta, Usuario → Operación, Proveedor → Suministro
-   
-5. COMPOSICIÓN: Principal → Parte
-   * Ejemplos: Documento → Sección, Sistema → Módulo
-
-CORRECCIONES SEMÁNTICAS UNIVERSALES:
-- Entidad clasificadora (categoría, tipo, clase) → Entidad clasificada
-- Entidad principal → Entidad de detalle (que empiece con "Detalle")  
-- Actor (persona, usuario, cliente) → Acción (venta, compra, operación)
-- Contenedor (pedido, factura, documento) → Contenido (item, producto, sección)
-- Las multiplicidades deben reflejar la lógica del dominio
-
-VERIFICACIÓN OBLIGATORIA DE TIPOS DE RELACIÓN:
-- ¿Examinaste los EXTREMOS de cada línea buscando símbolos?
-- ¿Detectaste triángulos vacíos para herencia?
-- ¿Identificaste rombos rellenos para composición?
-- ¿Encontraste rombos vacíos para agregación?
-- ¿Clasificaste correctamente cada tipo de relación?
-- ¿Usaste "association" solo para líneas simples sin símbolos?
-
-VERIFICACIÓN OBLIGATORIA M:N:
-- ¿Detectaste todas las líneas con multiplicidad *?
-- ¿Identificaste correctamente las tablas intermedias?
-- ¿Las tablas intermedias conectan exactamente 2 entidades principales?
-- ¿Evitaste duplicar relaciones en ambas direcciones?
-- ⚠️ ¿CADA tabla "Detalle*" o intermedia tiene EXACTAMENTE 2 conexiones?
-- ¿Las direcciones de relaciones siguen patrones semánticos universales?
-- ¿Las multiplicidades son lógicamente consistentes?
-
-PATRONES UNIVERSALES DE VERIFICACIÓN:
-- Clasificador → Clasificado (Ej: Categoría → Item, Tipo → Elemento)
-- Contenedor → Contenido (Ej: Orden → Detalle, Documento → Sección)  
-- Actor → Acción (Ej: Usuario → Operación, Agente → Transacción)
-- Principal → Subordinado (Ej: Empresa → Empleado, Sistema → Módulo)
-- Temporal → Entidad (Ej: Período → Evento, Fecha → Registro)
-
-Formato requerido:
+FORMATO EXACTO:
 {
+  "domain": "ONG de envíos humanitarios",
   "classes": [
-    {
-      "name": "NombreClase",
-      "attributes": [
-        {"name": "atributo", "type": "String", "visibility": "private"},
-        {"name": "otroAtributo", "type": "Integer", "visibility": "public"}
-      ],
-      "methods": []
-    }
+    { "name": "Envio", "attributes": [ {"name": "destino", "type": "String", "visibility": "private"} ], "methods": [] },
+    { "name": "Medicamento", "attributes": [ {"name": "nombre", "type": "String", "visibility": "private", "inferred": true} ], "methods": [] },
+    { "name": "SedeEnvio", "associationOf": ["Envio", "Sede"], "attributes": [], "methods": [] }
   ],
   "relationships": [
-    {
-      "type": "association",
-      "source": "ClaseOrigen",
-      "target": "ClaseDestino",
-      "sourceMultiplicity": "1",
-      "targetMultiplicity": "0..*"
-    }
-  ]
+    { "type": "association", "source": "Sede", "target": "Voluntario", "sourceMultiplicity": "1", "targetMultiplicity": "*" },
+    { "type": "inheritance", "source": "Medicamento", "target": "Envio", "sourceMultiplicity": "1", "targetMultiplicity": "1", "inferred": true }
+  ],
+  "notes": ["Medicamento, Alimento y Humanitaria se tomaron como tipos de Envio (herencia) porque cuelgan de él sin multiplicidades."]
 }
 
-⚠️ FORMATO CRÍTICO PARA RELACIONES:
-- "source": clase de ORIGEN (donde sale la flecha o está el rombo)
-- "target": clase de DESTINO (donde llega la flecha o NO está el rombo)
-- "sourceMultiplicity": multiplicidad en el extremo SOURCE (ej: "1", "*", "0..*", "1..*")
-- "targetMultiplicity": multiplicidad en el extremo TARGET (ej: "1", "*", "0..*", "1..*")
-
-EJEMPLOS REALES:
-1. Producto 0..*────1 Categoría (asociación):
-   {
-     "type": "association",
-     "source": "Producto",
-     "target": "Categoría",
-     "sourceMultiplicity": "0..*",
-     "targetMultiplicity": "1"
-   }
-
-2. Venta 1────* DetalleVenta (asociación):
-   {
-     "type": "association",
-     "source": "Venta",
-     "target": "DetalleVenta",
-     "sourceMultiplicity": "1",
-     "targetMultiplicity": "*"
-   }
-
-3. Categoría ◊────* Producto (agregación, rombo en Categoría):
-   {
-     "type": "aggregation",
-     "source": "Categoría",
-     "target": "Producto",
-     "sourceMultiplicity": "1",
-     "targetMultiplicity": "*"
-   }
-
-Reglas universales:
-- Visibilidad de atributos: Detectar desde el diagrama:
-  * "-" = "private" (por defecto si no hay símbolo)
-  * "+" = "public" 
-  * "#" = "protected"
-- Tipos: "String", "Integer", "Float", "Date", "Boolean" según corresponda
-- NO incluir atributos "id" - se asumen implícitamente
-- Para relaciones directas: crear una relación "association" con multiplicidad apropiada
-- Para relaciones M:N: crear relaciones separadas desde cada entidad principal hacia la tabla intermedia
-- ¡IMPORTANTE!: Una línea = una relación, evitar duplicados bidireccionales
-- ⚠️ CRÍTICO: Verificar que cada "Detalle*" tenga 2 conexiones
-- Analizar cuidadosamente las líneas y multiplicidades visibles en el diagrama`;
+VERIFICACIÓN FINAL antes de responder:
+- ¿Cada rectángulo con nombre del dibujo aparece en "classes"?
+- ¿Cada línea entre dos rectángulos aparece UNA sola vez en "relationships" (sin duplicar A->B y B->A)?
+- ¿Los nombres usados en "relationships" y "associationOf" coinciden EXACTAMENTE con los de "classes"?`;
 
   const payload = {
     model: 'gpt-4o', // Modelo más económico
@@ -1176,6 +1072,7 @@ export async function importDiagramFromImage(
       success: true,
       nodes,
       edges,
+      summary: buildImportSummary(openaiResponse),
     };
   } catch (error) {
     console.error('❌ Error en importación:', error);
