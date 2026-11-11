@@ -91,8 +91,15 @@ Probar cada etapa (la app Flutter con emulador/celular; el backend con Postman).
 - Paso 4 (offline Flutter) HECHO por Ricardo y probado en el Redmi (proyecto `backend-demo\abogado`, backend en
   Docker puerto 8082 + `adb reverse tcp:8080 tcp:8082`). Cinthia hizo otra versión del offline; al unir el 11/11 se
   conservó la de Ricardo y se descartaron sus plantillas `templates/flutter/*.dart` y su guía de prueba.
-- **IA local: la hace Cinthia** (el PC de Ricardo no tiene memoria suficiente). Ya existe el selector de motor
-  Nube (Gemini) / Local (Ollama) en `AiProviderPanel.tsx` / `lib/aiClient.ts`; falta montar y probar el modelo local.
+- IA local: modelo abierto (Qwen2.5-VL 7B con Ollama) en Google Colab + túnel cloudflared, cuaderno
+  `colab/IA_local_Ollama.ipynb` y `GUIA_IA_LOCAL.md` (hecho por Cinthia, unido a main el 11/11). Selector Nube/Local en
+  `AiProviderPanel.tsx` / `lib/aiClient.ts`. Decisión: NO instalar IA en el PC de Ricardo (RAM/disco) y no hace falta,
+  porque la pizarra depende de Supabase (internet) igual. El modelo no se entrena: se especializa con el prompt.
+- Pizarra web sin conexión: decidido NO hacerlo (colaboración en tiempo real requiere red; editar desconectado
+  generaría conflictos). Solo la app móvil generada funciona sin conexión.
+- Enterprise Architect: exportar/importar XMI 2.1 (`utils/xmiEA.ts`, botones "Importar EA"/"Exportar EA"), probado
+  importando en EA real (clases, atributos, 5 relaciones, multiplicidades, estereotipo «asociativa», posiciones).
+- 11/11: todo unido en main; Ricardo presenta. Cinthia dejó de trabajar por ahora.
 
 ## Trabajo en equipo (ramas)
 - Compañera colaboradora: Cinthia (GitHub `Capi03`), trabaja en la rama `cinthia` (pasos 2 y 3: mover clases con IA,
