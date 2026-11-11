@@ -9,7 +9,7 @@ import LoginPage from '../pages/LoginPage';
 const RequireUser: React.FC<{ children: React.ReactElement }> = ({ children }) => {
   const location = useLocation();
   if (!getCurrentUserName()) {
-    return <Navigate to={`/login?next=${encodeURIComponent(location.pathname)}`} replace />;
+    return <Navigate to={`/login?next=${encodeURIComponent(location.pathname + location.search)}`} replace />;
   }
   return children;
 };

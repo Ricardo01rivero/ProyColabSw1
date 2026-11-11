@@ -9,8 +9,13 @@ const ALLOWED_NEXT = ['/board/host', '/board/guest'];
 export default function LoginPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  // next puede traer la pizarra del enlace de invitado: /board/guest?board=<id>
   const nextParam = searchParams.get('next') || '';
-  const next = ALLOWED_NEXT.includes(nextParam) ? nextParam : '/board/host';
+  const [nextPath, nextQuery = ''] = nextParam.split('?');
+  const boardId = new URLSearchParams(nextQuery).get('board');
+  const safeBoard = boardId && /^[\w-]+$/.test(boardId) ? `?board=${encodeURIComponent(boardId)}` : '';
+  const basePath = ALLOWED_NEXT.includes(nextPath) ? nextPath : '/board/host';
+  const next = basePath + safeBoard;
 
   const [name, setName] = useState(getLastUserName());
   const [error, setError] = useState('');
@@ -41,7 +46,7 @@ export default function LoginPage() {
             UML Board
           </Typography>
           <Typography variant="body2" color="text.secondary" gutterBottom align="center" sx={{ mb: 3 }}>
-            {next === '/board/guest'
+            {basePath === '/board/guest'
               ? 'Te invitaron a una pizarra. Escribe tu nombre para entrar.'
               : 'Inicia sesión para continuar'}
           </Typography>
@@ -68,7 +73,7 @@ export default function LoginPage() {
               margin="normal"
             />
             <Button type="submit" fullWidth variant="contained" size="large" sx={{ mt: 3 }}>
-              {next === '/board/guest' ? 'Entrar como invitado' : 'Iniciar Sesión'}
+              {basePath === '/board/guest' ? 'Entrar como invitado' : 'Iniciar Sesión'}
             </Button>
           </form>
         </Paper>
