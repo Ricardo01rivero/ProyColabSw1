@@ -11,6 +11,41 @@ export interface DiagramAction {
 }
 
 /**
+ * Interpreta la respuesta del modelo como lista de acciones.
+ * Gemini suele devolver el JSON limpio; los modelos locales pequeños a veces añaden texto alrededor,
+ * usan ```json, dejan comas sobrantes o devuelven { "acciones": [...] } / una sola acción.
+ */
+export const parseActionsJson = (content: string): DiagramAction[] => {
+  const limpio = content.replace(/```(?:json)?/gi, '').trim();
+
+  const intentos: string[] = [limpio];
+  const a = limpio.indexOf('[');
+  const b = limpio.lastIndexOf(']');
+  if (a !== -1 && b > a) intentos.push(limpio.slice(a, b + 1));
+  const o = limpio.indexOf('{');
+  const p = limpio.lastIndexOf('}');
+  if (o !== -1 && p > o) intentos.push(limpio.slice(o, p + 1));
+
+  for (const texto of intentos) {
+    for (const candidato of [texto, texto.replace(/,\s*([\]}])/g, '$1')]) {
+      try {
+        const valor = JSON.parse(candidato);
+        if (Array.isArray(valor)) return valor;
+        if (valor && typeof valor === 'object') {
+          const lista = valor.actions ?? valor.acciones ?? valor.result ?? valor.data;
+          if (Array.isArray(lista)) return lista;
+          if (typeof valor.type === 'string' && typeof valor.target === 'string') return [valor];
+        }
+      } catch {
+        // se prueba con el siguiente intento
+      }
+    }
+  }
+  console.error('❌ Contenido recibido que no se pudo interpretar:', content);
+  throw new Error('La respuesta de la IA no es un JSON válido');
+};
+
+/**
  * Procesa un prompt en lenguaje natural usando OpenAI para generar acciones sobre el diagrama UML
  */
 export const processUMLPrompt = async (
@@ -235,22 +270,7 @@ Respuesta: [{"type":"create","target":"class","data":{"label":"extremo_NEGRA","a
 
     console.log('📄 Respuesta de OpenAI:', content);
 
-    let jsonText = content.trim();
-
-    if (jsonText.startsWith('```json')) {
-      jsonText = jsonText.replace(/```json\n?/g, '').replace(/```\n?$/g, '').trim();
-    } else if (jsonText.startsWith('```')) {
-      jsonText = jsonText.replace(/```\n?/g, '').trim();
-    }
-
-    let actions: DiagramAction[];
-    try {
-      actions = JSON.parse(jsonText);
-    } catch (parseError) {
-      console.error('❌ Error parseando JSON:', parseError);
-      console.error('📄 Contenido recibido:', jsonText);
-      throw new Error('La respuesta de la IA no es un JSON válido');
-    }
+    const actions = parseActionsJson(content);
 
     if (!Array.isArray(actions)) {
       throw new Error('La respuesta debe ser un array de acciones');
