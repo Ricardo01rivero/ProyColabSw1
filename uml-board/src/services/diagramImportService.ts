@@ -2,7 +2,8 @@
 import type { NodeType, EdgeType } from '../utils/umlConstants';
 
 // Supabase y proxy de OpenAI (centralizados en supabase.config)
-import { supabase, OPENAI_PROXY_URL, SUPABASE_ANON_KEY } from '../lib/supabase.config';
+import { supabase } from '../lib/supabase.config';
+import { aiFetch } from '../lib/aiClient';
 
 // Tipos para el análisis OpenAI
 type OpenAIClass = {
@@ -855,17 +856,17 @@ PASO 5 - ENTENDER EL DOMINIO Y COMPLETAR (como lo haría un analista)
 
 FORMATO EXACTO:
 {
-  "domain": "ONG de envíos humanitarios",
+  "domain": "<de qué trata el sistema dibujado>",
   "classes": [
-    { "name": "Envio", "attributes": [ {"name": "destino", "type": "String", "visibility": "private"} ], "methods": [] },
-    { "name": "Medicamento", "attributes": [ {"name": "nombre", "type": "String", "visibility": "private", "inferred": true} ], "methods": [] },
-    { "name": "SedeEnvio", "associationOf": ["Envio", "Sede"], "attributes": [], "methods": [] }
+    { "name": "<ClaseA>", "attributes": [ {"name": "<atributoLeido>", "type": "String", "visibility": "private"} ], "methods": [] },
+    { "name": "<ClaseB>", "attributes": [ {"name": "<atributoSugerido>", "type": "String", "visibility": "private", "inferred": true} ], "methods": [] },
+    { "name": "<ClaseAClaseC>", "associationOf": ["<ClaseA>", "<ClaseC>"], "attributes": [], "methods": [] }
   ],
   "relationships": [
-    { "type": "association", "source": "Sede", "target": "Voluntario", "sourceMultiplicity": "1", "targetMultiplicity": "*" },
-    { "type": "inheritance", "source": "Medicamento", "target": "Envio", "sourceMultiplicity": "1", "targetMultiplicity": "1", "inferred": true }
+    { "type": "association", "source": "<ClaseC>", "target": "<ClaseD>", "sourceMultiplicity": "1", "targetMultiplicity": "*" },
+    { "type": "inheritance", "source": "<ClaseB>", "target": "<ClaseA>", "sourceMultiplicity": "1", "targetMultiplicity": "1", "inferred": true }
   ],
-  "notes": ["Medicamento, Alimento y Humanitaria se tomaron como tipos de Envio (herencia) porque cuelgan de él sin multiplicidades."]
+  "notes": ["<una frase por cada deducción, con el motivo>"]
 }
 
 VERIFICACIÓN FINAL antes de responder:
@@ -893,21 +894,17 @@ VERIFICACIÓN FINAL antes de responder:
         ],
       },
     ],
-    max_tokens: 2000,
+    max_tokens: 4000,
     temperature: 0.1,
+    // La IA local (Ollama) lo usa para garantizar JSON válido; el proxy de Gemini lo ignora
+    response_format: { type: 'json_object' },
   };
 
   console.log('🤖 Analizando imagen con IA Vision...');
 
   // CAMBIO: Usar edge function proxy en lugar de llamar directamente a OpenAI
-  const response = await fetch(OPENAI_PROXY_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-    },
-    body: JSON.stringify(payload),
-  });
+  // Nube (Gemini vía proxy) o IA local (Ollama en Colab) según el selector del chat
+  const response = await aiFetch(payload);
 
   if (!response.ok) {
     const errorData = await response

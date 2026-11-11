@@ -13,7 +13,8 @@
  *   el historial con nombres y el diagrama actual.
  */
 import type { RealtimeChannel } from '@supabase/supabase-js';
-import { supabase, OPENAI_PROXY_URL, SUPABASE_ANON_KEY } from '../lib/supabase.config';
+import { supabase } from '../lib/supabase.config';
+import { aiFetch } from '../lib/aiClient';
 import type { ChatMessage } from '../lib/types/database.types';
 import type { NodeType, EdgeType } from '../utils/umlConstants';
 
@@ -278,11 +279,8 @@ export async function askSeniorDev(params: {
     max_tokens: 1200,
   };
 
-  const response = await fetch(OPENAI_PROXY_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
-    body: JSON.stringify(payload),
-  });
+  // Nube (Gemini vía proxy) o IA local (Ollama en Colab) según el selector del chat
+  const response = await aiFetch(payload);
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({ error: 'Error desconocido' }));

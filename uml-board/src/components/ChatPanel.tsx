@@ -17,6 +17,8 @@ import {
   uploadChatFile,
 } from '../services/chatService';
 import type { OnlineUser } from '../services/chatService';
+import AiProviderPanel from './AiProviderPanel';
+import { describeAi } from '../lib/aiClient';
 
 interface ChatPanelProps {
   isOpen: boolean;
@@ -106,6 +108,15 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
   const [askAI, setAskAI] = useState(true);
   const [sending, setSending] = useState(false);
   const [aiThinking, setAiThinking] = useState(false);
+  const [showAiConfig, setShowAiConfig] = useState(false);
+  const [aiLabel, setAiLabel] = useState(describeAi());
+
+  // Actualiza la etiqueta cuando se cambia el motor de IA (Nube / Local)
+  useEffect(() => {
+    const onChange = () => setAiLabel(describeAi());
+    window.addEventListener('umlboard:ai-config', onChange);
+    return () => window.removeEventListener('umlboard:ai-config', onChange);
+  }, []);
   const [error, setError] = useState<string | null>(null);
 
   const listRef = useRef<HTMLDivElement>(null);
@@ -284,8 +295,16 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
           <div style={styles.subtitle} title={boardName}>
             📋 {boardName} · tú: <strong>{userName}</strong>
           </div>
+          <div style={styles.subtitle}>🤖 IA: {aiLabel}</div>
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
+          <button
+            onClick={() => setShowAiConfig(v => !v)}
+            style={{ ...styles.headerBtn, background: showAiConfig ? 'rgba(255,255,255,0.4)' : styles.headerBtn.background }}
+            title="Elegir motor de IA: Nube (Gemini) o Local (Colab)"
+          >
+            ⚙️
+          </button>
           <button
             onClick={() => setView(v => (v === 'people' ? 'chat' : 'people'))}
             style={{ ...styles.headerBtn, width: 'auto', padding: '0 10px', background: view === 'people' ? 'rgba(255,255,255,0.4)' : styles.headerBtn.background }}
@@ -303,6 +322,8 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
           </button>
         </div>
       </header>
+
+      {showAiConfig && <AiProviderPanel onDone={() => setShowAiConfig(false)} />}
 
       {view === 'people' ? (
         <div style={styles.list}>

@@ -2,7 +2,7 @@
 import type { NodeType, EdgeType } from '../utils/umlConstants';
 
 // Configuración del proxy de OpenAI (centralizada en supabase.config)
-import { OPENAI_PROXY_URL as PROXY_URL, SUPABASE_ANON_KEY } from '../lib/supabase.config'; 
+import { aiFetch } from '../lib/aiClient';
 
 export interface DiagramAction {
   type: 'create' | 'update' | 'delete' | 'move' | 'arrange';
@@ -184,11 +184,6 @@ Respuesta: [{"type":"create","target":"class","data":{"label":"Estudiante_Curso"
 Usuario: "Crear relación * a * entre extremo y NEGRA"
 Respuesta: [{"type":"create","target":"class","data":{"label":"extremo_NEGRA","attributes":[],"asociativa":true,"relaciona":["extremo","NEGRA"]}},{"type":"create","target":"edge","data":{"sourceLabel":"extremo","targetLabel":"extremo_NEGRA","tipo":"asociacion","multiplicidadOrigen":"1","multiplicidadDestino":"*"}},{"type":"create","target":"edge","data":{"sourceLabel":"NEGRA","targetLabel":"extremo_NEGRA","tipo":"asociacion","multiplicidadOrigen":"1","multiplicidadDestino":"*"}}]`;
 
-  // Headers
-  const headers = {
-    'Content-Type': 'application/json',
-    Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-  };
 
   const payload = {
     model: 'gpt-4o', //gpt-4-turbo-preview -> mas caro xd
@@ -210,11 +205,8 @@ Respuesta: [{"type":"create","target":"class","data":{"label":"extremo_NEGRA","a
   console.log('📝 Prompt del usuario:', prompt);
 
   try {
-    const response = await fetch(PROXY_URL, {
-      method: 'POST',
-      headers: headers,
-      body: JSON.stringify(payload),
-    });
+    // Nube (Gemini vía proxy) o IA local (Ollama en Colab) según el selector del chat
+    const response = await aiFetch(payload);
 
     if (!response.ok) {
       const errorData = await response
