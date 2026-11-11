@@ -4,6 +4,8 @@ import './StylesUmlPrompt.css';
 import { processUMLPrompt } from '../services/aiPromptService';
 import type { DiagramAction } from '../services/aiPromptService';
 import type { NodeType, EdgeType } from '../utils/umlConstants';
+import { computeLayout } from '../utils/layoutUtils';
+import type { LayoutType } from '../utils/layoutUtils';
 
 interface UmlPromptProps {
   isOpen: boolean;
@@ -14,6 +16,7 @@ interface UmlPromptProps {
   onUpdateEdge: (edgeId: string, updates: Partial<EdgeType>) => Promise<void>;
   onDeleteNode: (nodeId: string) => Promise<void>;
   onDeleteEdge: (edgeId: string) => Promise<void>;
+  onMoveNode: (nodeId: string, x: number, y: number) => void;
   existingNodes: NodeType[];
   existingEdges: EdgeType[];
 }
@@ -26,6 +29,7 @@ const UmlPrompt: React.FC<UmlPromptProps> = ({
   onUpdateNode,
   onDeleteNode,
   onDeleteEdge,
+  onMoveNode,
   existingNodes,
   existingEdges,
 }) => {
@@ -131,7 +135,7 @@ const UmlPrompt: React.FC<UmlPromptProps> = ({
         try {
           isListeningRef.current = false;
           recognitionRef.current.stop();
-        } catch (err) {
+        } catch {
           console.log('Ya estaba detenido');
         }
       }
@@ -258,6 +262,30 @@ const UmlPrompt: React.FC<UmlPromptProps> = ({
             console.warn(`⚠️ No se encontraron las clases: ${action.data.sourceLabel} o ${action.data.targetLabel}`);
           }
         } 
+        else if (action.type === 'move' && action.target === 'class') {
+          const nodeToMove = existingNodes.find(n =>
+            n.id === action.data.id || n.label === action.data.label
+          );
+          if (nodeToMove) {
+            const hasAbs = typeof action.data.x === 'number' && typeof action.data.y === 'number';
+            const newX = hasAbs ? action.data.x : nodeToMove.x + (Number(action.data.dx) || 0);
+            const newY = hasAbs ? action.data.y : nodeToMove.y + (Number(action.data.dy) || 0);
+            onMoveNode(nodeToMove.id, Math.round(newX), Math.round(newY));
+            console.log('📍 Clase movida:', nodeToMove.label, '→', newX, newY);
+          } else {
+            console.warn('⚠️ Clase no encontrada para mover:', action.data);
+          }
+        }
+        else if (action.type === 'arrange' && action.target === 'diagram') {
+          const layouts: LayoutType[] = ['grid', 'row', 'column', 'circle', 'hierarchy'];
+          const layout: LayoutType = layouts.includes(action.data?.layout)
+            ? action.data.layout
+            : 'grid';
+          computeLayout(layout, existingNodes, existingEdges).forEach(p =>
+            onMoveNode(p.id, p.x, p.y)
+          );
+          console.log('🧩 Diagrama ordenado con layout:', layout);
+        }
         else if (action.type === 'update' && action.target === 'class') {
           await onUpdateNode(action.data.id, action.data);
           console.log('✅ Clase actualizada:', action.data.id);

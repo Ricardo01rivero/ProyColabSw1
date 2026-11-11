@@ -34,32 +34,42 @@ type Props = {
   isLocked?: boolean;
 };
 
+// Estilo inspirado en Enterprise Architect: fondo crema, borde fino oscuro, esquinas casi rectas
+// y compartimentos separados por líneas (nombre / atributos).
+const EA_BORDER = '#6b5a2e';
+const FONT = "'Comfortaa', 'Segoe UI', system-ui, sans-serif";
+const SCOPE_COLOR: Record<string, string> = { public: '#2e7d32', protected: '#ef6c00', private: '#c62828' };
+
 const nodeStyle = (n: NodeType, relationMode: boolean): React.CSSProperties => ({
   position: 'absolute',
   left: n.x,
   top: n.y,
   width: NODE_WIDTH,
   height: n.height ?? NODE_HEIGHT,
-  border: '1px solid #000', // Todas las clases con el mismo borde
+  border: `1.5px solid ${EA_BORDER}`,
+  fontFamily: FONT,
+  boxShadow: '3px 4px 0 rgba(107, 90, 46, 0.18)',
   display: 'flex',
   flexDirection: 'column',
   alignItems: 'center',
   justifyContent: 'flex-start',
   cursor: relationMode ? 'pointer' : 'move',
-  background: relationMode ? '#e6f7ff' : '#fff', // Todas las clases con el mismo fondo
+  // Crema (clase normal), verde pálido (clase asociativa / tabla intermedia), celeste al crear relaciones
+  background: relationMode ? '#e6f7ff' : n.asociativa ? '#e8f5e9' : '#fffde7',
   boxSizing: 'border-box',
-  borderRadius: 8, // Todas las clases con el mismo radio
+  borderRadius: 3,
   overflow: 'hidden',
 });
 
 const selectStyle: React.CSSProperties = {
+  fontFamily: 'inherit',
   fontSize: 13,
   border: 'none',
   background: 'transparent',
   outline: 'none',
-  padding: '2px 6px',
-  marginRight: 4,
-  minWidth: 32,
+  padding: '2px 4px',
+  marginRight: 2,
+  minWidth: 28,
   maxWidth: 80,
   height: 24,
   boxShadow: 'none',
@@ -67,12 +77,15 @@ const selectStyle: React.CSSProperties = {
 };
 
 const inputStyle: React.CSSProperties = {
+  fontFamily: 'inherit',
   border: 'none',
   background: 'transparent',
   fontSize: 13,
-  width: 70,
-  marginRight: 4,
+  flex: 1,
+  minWidth: 0,
+  marginRight: 2,
   outline: 'none',
+  color: '#263238',
 };
 
 const RELATION_TYPES = [
@@ -163,7 +176,16 @@ const Node: React.FC<Props> = ({
           ✕
         </button>
       )}
-      <div style={{ width: '100%', textAlign: 'center', fontWeight: 'bold', marginTop: 8 }}>
+      <div
+        style={{
+          width: '100%',
+          textAlign: 'center',
+          fontWeight: 'bold',
+          padding: '8px 0 6px',
+          borderBottom: `1.5px solid ${EA_BORDER}`,
+          background: node.asociativa ? 'rgba(129, 199, 132, 0.35)' : 'rgba(255, 213, 79, 0.4)',
+        }}
+      >
         <input
           type='text'
           value={localLabel}
@@ -182,8 +204,10 @@ const Node: React.FC<Props> = ({
           disabled={isLocked}
           style={{
             width: '96%',
+            fontFamily: 'inherit',
             fontWeight: 'bold',
-            fontSize: 17,
+            fontSize: 16,
+            color: '#3e2f0b',
             textAlign: 'center',
             border: 'none',
             background: 'transparent',
@@ -193,14 +217,13 @@ const Node: React.FC<Props> = ({
           }}
         />
       </div>
-      <div style={{ width: '100%', maxHeight: '70%', overflowY: 'auto', marginTop: 4 }}>
+      <div style={{ width: '100%', maxHeight: '70%', overflowY: 'auto', marginTop: 4, padding: '0 8px', boxSizing: 'border-box' }}>
         {(node.attributes ?? []).map((attr, idx) => (
           <div
             key={idx}
             style={{
               display: 'flex',
               alignItems: 'center',
-              marginBottom: 2,
               width: '100%',
               minHeight: ATTR_HEIGHT,
               boxSizing: 'border-box',
@@ -213,7 +236,8 @@ const Node: React.FC<Props> = ({
               value={attr.scope}
               onChange={e => onEditAttribute(node.id, idx, 'scope', e.target.value)}
               disabled={isLocked}
-              style={selectStyle}
+              style={{ ...selectStyle, color: SCOPE_COLOR[attr.scope] ?? '#333', fontWeight: 700, fontSize: 15 }}
+              title='Visibilidad: + público, # protegido, - privado'
             >
               <option value='public'>+</option>
               <option value='protected'>#</option>
@@ -226,11 +250,12 @@ const Node: React.FC<Props> = ({
               disabled={isLocked}
               style={inputStyle}
             />
+            <span style={{ color: '#8d7b4a', marginRight: 2 }}>:</span>
             <select
               value={attr.datatype}
               onChange={e => onEditAttribute(node.id, idx, 'datatype', e.target.value)}
               disabled={isLocked}
-              style={{ ...selectStyle, marginLeft: 4, maxWidth: 90 }}
+              style={{ ...selectStyle, maxWidth: 90, color: '#5d4e37' }}
             >
               <option value='Integer'>Integer</option>
               <option value='Float'>Float</option>

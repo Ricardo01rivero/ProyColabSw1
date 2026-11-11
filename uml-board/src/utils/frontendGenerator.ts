@@ -2,6 +2,7 @@
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import type { NodeType, EdgeType } from './umlConstants';
+import { foreignKeysFor } from './fkRules';
 import { normalizeAttributeNamesForCode } from './umlConstants';
 
 // Utilidades
@@ -93,83 +94,15 @@ function getManyToManyRelations(
   return manyToManyRelations;
 }
 
-// Obtiene campos foráneos para una clase
+// Obtiene campos foráneos para una clase (misma regla que el backend: ver fkRules.ts)
 function getForeignKeyFields(
   cls: NodeType,
   nodes: NodeType[],
   edges: EdgeType[]
 ): Array<{ fieldName: string; className: string }> {
-  const foreignKeys: Array<{ fieldName: string; className: string }> = [];
-
-  // Obtener nombres de atributos existentes para evitar duplicados
+  // Evitar duplicados con atributos que la clase ya tiene (entidades importadas)
   const existingAttributeNames = new Set((cls.attributes || []).map(attr => attr.name));
-
-  // Para clases asociativas, agregar foráneas a las dos clases relacionadas
-  if (cls.asociativa && cls.relaciona) {
-    console.log(`🔧 Procesando entidad asociativa (frontend): ${cls.label}`);
-    console.log(`   Relaciona: [${cls.relaciona.join(', ')}]`);
-    console.log(`   Atributos existentes: [${Array.from(existingAttributeNames).join(', ')}]`);
-
-    cls.relaciona.forEach(relId => {
-      // Buscar primero por ID, luego por nombre si no se encuentra
-      let relClass = nodes.find(n => n.id === relId);
-
-      // Si no se encuentra por ID, buscar por nombre (para entidades importadas)
-      if (!relClass) {
-        relClass = nodes.find(n => n.label === relId);
-      }
-
-      if (relClass) {
-        const fieldName = relClass.label.charAt(0).toLowerCase() + relClass.label.slice(1) + 'Id';
-
-        // Solo agregar si no existe ya como atributo (para entidades importadas)
-        if (!existingAttributeNames.has(fieldName)) {
-          console.log(`   ✅ Agregando FK (frontend): ${fieldName} → ${relClass.label}`);
-          foreignKeys.push({ fieldName, className: relClass.label });
-        } else {
-          console.log(
-            `   ⏭️ Saltando FK ya existente (frontend): ${fieldName} → ${relClass.label}`
-          );
-        }
-      } else {
-        console.warn(`❌ No se encontró clase relacionada (frontend) para ID/nombre: ${relId}`);
-      }
-    });
-  }
-
-  // Herencia: el campo foráneo va en la clase hija
-  edges
-    .filter(r => r.tipo === 'herencia' && r.source === cls.id)
-    .forEach(rel => {
-      const parentClass = nodes.find(c => c.id === rel.target && !c.asociativa);
-      if (parentClass) {
-        const fieldName =
-          parentClass.label.charAt(0).toLowerCase() + parentClass.label.slice(1) + 'Id';
-        if (!existingAttributeNames.has(fieldName)) {
-          foreignKeys.push({ fieldName, className: parentClass.label });
-        }
-      }
-    });
-
-  // Otras relaciones: agregar foráneas por cada relación donde esta clase es destino
-  const incomingRelations = edges.filter(
-    r => r.target === cls.id && ['asociacion', 'agregacion', 'composicion'].includes(r.tipo)
-  );
-
-  const added = new Set<string>();
-  incomingRelations.forEach(rel => {
-    const originClass = nodes.find(c => c.id === rel.source && !c.asociativa);
-    if (originClass) {
-      const fieldName =
-        originClass.label.charAt(0).toLowerCase() + originClass.label.slice(1) + 'Id';
-      if (!added.has(fieldName) && !existingAttributeNames.has(fieldName)) {
-        foreignKeys.push({ fieldName, className: originClass.label });
-        added.add(fieldName);
-      }
-    }
-  });
-
-  return foreignKeys;
+  return foreignKeysFor(cls, nodes, edges).filter(fk => !existingAttributeNames.has(fk.fieldName));
 }
 
 // Genera pubspec.yaml

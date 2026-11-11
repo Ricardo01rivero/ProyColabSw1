@@ -8,7 +8,9 @@ el **1er parcial (pendiente, no lo presentó)** y el **2do parcial (fecha origin
 Base tomada de un proyecto previo de compañeros (Klaus Parada Burgos y Marcos A. Villarroel Siancas,
 sem. 3-2025), rama `hide-openai-token` de https://github.com/daviddlv007/proyecto-software-1.
 Se subió como repo nuevo, un solo commit, con créditos en el README (decisión acordada con el usuario:
-no esconder el origen; se evaluó la opción sin créditos y se descartó). Mantener esos créditos.
+no esconder el origen; se evaluó la opción sin créditos y se descartó). El 10/11 Ricardo decidió eliminar el
+README.md principal (con los créditos), siguiendo el cambio de Cinthia; quedan README-INSTALACION y
+README-FUNCIONAMIENTO. Recomendado mencionar la base de los compañeros en la documentación (verificación de autoría).
 La carpeta antigua `../proyecto_Sw1` es solo respaldo (rama `main` del compañero); no se usa.
 
 ## Qué es el sistema
@@ -73,6 +75,14 @@ Probar cada etapa (la app Flutter con emulador/celular; el backend con Postman).
   (`flutter doctor --android-licenses`, debe hacerlo el usuario) y probar en el Redmi Note 9S por USB.
 - Proyectos de prueba en `C:\Users\win10\Desktop\backend-demo\` (spring-crud y flutter\flutter-mvp).
 - Flutter en `C:\Programas\Herramientas\flutter`. IP del PC en su wifi: 192.168.1.9 (perfil Público, Java permitido).
+
+- 10/11 noche: pasos 2 y 3 HECHOS por Cinthia (IA mueve/ordena clases, vista ER pata de gallo, SQL, FKs según
+  multiplicidad en `fkRules.ts`). Importación desde imagen reforzada (diagramas a mano, clases de asociación,
+  la IA completa atributos obvios marcados como sugeridos). Flutter probado en el Redmi: el router de casa aísla
+  clientes wifi → usar `adb reverse tcp:8080 tcp:8080` y `http://localhost:8080`, o el hotspot del celular.
+  Gradle limitado a 1,5 GB en `android/gradle.properties` (PC de 8 GB). Todo unido en `main` el 10/11.
+- Documentación del 2do parcial: `Documentacion/` (no se sube; el .docx base es del Grupo 4). Faltan: arquitectura
+  (4 tipos), IA local, desarrollo dirigido por especificación, manual de usuario. Entrega 11/11 8:00; examen 15:15.
 
 ## Trabajo en equipo (ramas)
 - Compañera colaboradora: Cinthia (GitHub `Capi03`), trabaja en la rama `cinthia` (pasos 2 y 3: mover clases con IA,

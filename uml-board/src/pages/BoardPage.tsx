@@ -17,6 +17,8 @@ import { NODE_WIDTH, NODE_HEIGHT, calculateNodeHeight } from '../utils/umlConsta
 import UmlPrompt from './UmlPrompt';
 // Chat compartido con la IA "dev senior" (2do parcial)
 import ChatPanel from '../components/ChatPanel';
+import ErView from '../components/ErView';
+import { exportarSql } from '../utils/sqlGenerator';
 import { clearCurrentUserName, getCurrentUserName } from '../lib/currentUser';
 import './StylesUmlPrompt.css';
 
@@ -64,6 +66,7 @@ type SupabaseEdgeOutput = {
 };
 
 const buttonStyle: React.CSSProperties = {
+  fontFamily: 'inherit',
   border: 'none',
   borderRadius: 8,
   padding: '10px 16px',
@@ -75,15 +78,44 @@ const buttonStyle: React.CSSProperties = {
   minWidth: '120px',
 };
 
+// Grupos de botones de la barra (misma familia de color por grupo)
+const groupStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  padding: '4px 10px',
+  borderRadius: 10,
+  background: 'rgba(255,255,255,0.12)',
+};
+const groupLabelStyle: React.CSSProperties = {
+  fontSize: 10,
+  fontWeight: 700,
+  letterSpacing: 0.5,
+  textTransform: 'uppercase',
+  color: 'rgba(255,255,255,0.75)',
+  marginRight: 4,
+};
+const groupBtn: React.CSSProperties = {
+  ...buttonStyle,
+  marginRight: 0,
+  minWidth: 0,
+  padding: '8px 12px',
+  fontSize: 13,
+};
+
 const toolbarStyle: React.CSSProperties = {
   position: 'fixed',
   top: 0,
   left: 0,
   right: 0,
   zIndex: 3000,
-  background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+  // Efecto vidrio esmerilado: fondo translúcido + desenfoque de lo que hay detrás
+  background: 'linear-gradient(135deg, rgba(38, 70, 83, 0.78) 0%, rgba(42, 100, 110, 0.6) 100%)',
+  backdropFilter: 'blur(16px) saturate(160%)',
+  WebkitBackdropFilter: 'blur(16px) saturate(160%)',
+  borderBottom: '1px solid rgba(255, 255, 255, 0.35)',
   padding: '12px 16px',
-  boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+  boxShadow: '0 4px 24px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.3)',
   display: 'flex',
   alignItems: 'center',
   flexWrap: 'wrap',
@@ -123,6 +155,19 @@ const BoardPage = ({ mode = 'host' }: { mode?: 'host' | 'guest' }) => {
   // Chat compartido con la IA
   const userName = getCurrentUserName() || 'Anónimo';
   const [isChatOpen, setIsChatOpen] = useState(false);
+  // Vista activa: diagrama de clases o modelo entidad-relación (derivado del mismo diagrama)
+  const [viewMode, setViewMode] = useState<'clases' | 'er'>('clases');
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  const [toolbarHeight, setToolbarHeight] = useState(70);
+  useEffect(() => {
+    const el = toolbarRef.current;
+    if (!el) return;
+    const update = () => setToolbarHeight(el.offsetHeight);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
   const [chatUnread, setChatUnread] = useState(0);
   const [onlineCount, setOnlineCount] = useState(0);
 
@@ -1010,6 +1055,7 @@ const BoardPage = ({ mode = 'host' }: { mode?: 'host' | 'guest' }) => {
         overflow: 'hidden',
         background: '#f5f5f5',
         paddingTop: '70px',
+        fontFamily: "'Comfortaa', 'Segoe UI', system-ui, sans-serif",
       }}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
@@ -1028,7 +1074,7 @@ const BoardPage = ({ mode = 'host' }: { mode?: 'host' | 'guest' }) => {
       }}
     >
       {/* Barra de herramientas superior */}
-      <div style={toolbarStyle} data-toolbar='true'>
+      <div ref={toolbarRef} style={toolbarStyle} data-toolbar='true'>
         <h1 style={titleStyle}>🎨 UML Designer</h1>
         
         {/* Indicador de modo */}
@@ -1212,7 +1258,7 @@ const BoardPage = ({ mode = 'host' }: { mode?: 'host' | 'guest' }) => {
                   fontSize: 12,
                   padding: '8px 12px',
                 }}
-                title='Compartir URL de invitado'
+                title='Compartir: copia el enlace para invitar a otras personas como invitados'
               >
                 🔗 Compartir
               </button>
@@ -1233,7 +1279,7 @@ const BoardPage = ({ mode = 'host' }: { mode?: 'host' | 'guest' }) => {
                   fontSize: 12,
                   padding: '8px 12px',
                 }}
-                title={currentBoardData?.locked ? 'Desbloquear pizarra' : 'Bloquear pizarra'}
+                title={currentBoardData?.locked ? 'Desbloquear: los invitados vuelven a poder editar la pizarra' : 'Bloquear: los invitados solo podrán ver la pizarra, sin editar'}
               >
                 {currentBoardData?.locked ? '🔒 Bloqueada' : '🔓 Bloquear'}
               </button>
@@ -1241,91 +1287,150 @@ const BoardPage = ({ mode = 'host' }: { mode?: 'host' | 'guest' }) => {
           ) : null}
         </div>
 
-        {/* Botones principales */}
-        <div style={sectionStyle}>
-          <button
-            onClick={addNode}
-            style={{ ...buttonStyle, background: isLocked() ? '#ccc' : '#1976d2', color: '#fff', cursor: isLocked() ? 'not-allowed' : 'pointer' }}
-            title='Crear una nueva clase'
-            disabled={isLocked()}
-          >
-            ➕ Nueva Clase
-          </button>
-          
-          {/* Botón del Asistente UML */}
-          <button
-            onClick={() => {
-              if (isLocked()) {
-                alert('La pizarra está bloqueada por el anfitrión');
-                return;
+        {/* Botones principales (agrupados) */}
+        <div style={{ ...sectionStyle, gap: 10 }}>
+          {/* Grupo: Diagrama */}
+          <div style={groupStyle}>
+            <span style={groupLabelStyle}>Diagrama</span>
+            <button
+              onClick={addNode}
+              style={{ ...groupBtn, background: isLocked() ? '#ccc' : '#1976d2', color: '#fff', cursor: isLocked() ? 'not-allowed' : 'pointer' }}
+              title='Nueva clase: agrega una clase vacía al diagrama'
+              disabled={isLocked()}
+            >
+              ➕ Nueva Clase
+            </button>
+            <button
+              onClick={() => {
+                if (isLocked()) {
+                  alert('La pizarra está bloqueada por el anfitrión');
+                  return;
+                }
+                console.log('🤖 Abriendo Asistente UML');
+                setIsPromptOpen(true);
+              }}
+              style={{ ...groupBtn, background: isLocked() ? '#ccc' : '#1976d2', color: '#fff', cursor: isLocked() ? 'not-allowed' : 'pointer' }}
+              title='Asistente UML: escribe o dicta una instrucción y la IA agrega, cambia, elimina o mueve clases'
+            >
+              ✨ Asistente UML
+            </button>
+            <button
+              onClick={handleStartManyToMany}
+              style={{
+                ...groupBtn,
+                background: currentMode === 'manyToMany' ? '#ff9800' : '#1976d2',
+                color: '#fff',
+              }}
+              disabled={currentMode === 'relation'}
+              title='Muchos a Muchos: elige dos clases y crea la tabla intermedia entre ellas'
+            >
+              ⚡ Muchos a Muchos
+            </button>
+          </div>
+
+          {/* Grupo: Archivo */}
+          <div style={groupStyle}>
+            <span style={groupLabelStyle}>Archivo</span>
+            <button
+              onClick={handleImportImage}
+              style={{
+                ...groupBtn,
+                background: importing || isLocked() ? '#ccc' : '#00897b',
+                color: '#fff',
+                opacity: importing || isLocked() ? 0.7 : 1,
+                cursor: importing || isLocked() ? 'not-allowed' : 'pointer',
+              }}
+              disabled={importing || isLocked()}
+              title='Importar imagen: sube una foto o captura de un diagrama de clases y la IA lo convierte en diagrama editable'
+            >
+              {importing ? '⏳ Importando...' : '📸 Importar Imagen'}
+            </button>
+            <button
+              onClick={handleImportJSON}
+              style={{ ...groupBtn, background: '#00897b', color: '#fff' }}
+              title='Importar JSON: carga un diagrama guardado antes desde un archivo .json'
+            >
+              📄 Importar JSON
+            </button>
+            <button
+              onClick={handleExportJSON}
+              style={{ ...groupBtn, background: '#00897b', color: '#fff' }}
+              title='Exportar JSON: descarga el diagrama actual como archivo .json'
+            >
+              💾 Exportar JSON
+            </button>
+          </div>
+
+          {/* Grupo: Generar código */}
+          <div style={groupStyle}>
+            <span style={groupLabelStyle}>Generar</span>
+            <button
+              onClick={handleGenerarBackend}
+              style={{ ...groupBtn, background: '#ef6c00', color: '#fff' }}
+              title='Backend: genera un proyecto Spring Boot (ZIP) con las entidades del diagrama'
+            >
+              ⚙️ Backend
+            </button>
+            <button
+              onClick={handleGenerarFrontend}
+              style={{ ...groupBtn, background: '#ef6c00', color: '#fff' }}
+              title='Frontend: genera una app Flutter (ZIP) con un CRUD por cada clase'
+            >
+              📱 Frontend
+            </button>
+            <button
+              onClick={() =>
+                exportarSql(
+                  nodes,
+                  edges.map(convertReactFlowToUMLEdge),
+                  currentBoardData?.name || 'Diagrama Principal'
+                )
               }
-              console.log('🤖 Abriendo Asistente UML');
-              setIsPromptOpen(true);
-            }}
-            style={{ ...buttonStyle, background: isLocked() ? '#ccc' : '#4caf50', color: '#fff', cursor: isLocked() ? 'not-allowed' : 'pointer' }}
-            title='Asistente UML con IA'
-          >
-            ✨ Asistente UML
-          </button>
+              style={{ ...groupBtn, background: '#ef6c00', color: '#fff' }}
+              title='SQL: descarga el script CREATE TABLE para PostgreSQL (tablas, PK y FK) del modelo entidad-relación'
+            >
+              🧾 SQL
+            </button>
+          </div>
 
+          {/* Grupo: Vista (zoom) */}
+          <div style={groupStyle}>
+            <span style={groupLabelStyle}>Vista</span>
+            <button
+              onClick={() => setViewMode(v => (v === 'clases' ? 'er' : 'clases'))}
+              style={{ ...groupBtn, background: viewMode === 'er' ? '#ff9800' : '#546e7a', color: '#fff' }}
+              title={
+                viewMode === 'er'
+                  ? 'Volver al diagrama de clases para editar'
+                  : 'Ver el modelo entidad-relación (tablas, PK, FK, notación pata de gallo) generado del diagrama'
+              }
+            >
+              {viewMode === 'er' ? '🗂️ Ver Clases' : '📊 Ver ER'}
+            </button>
+            <button onClick={handleZoomOut} style={{ ...groupBtn, background: '#546e7a', color: '#fff' }} title='Alejar: reduce el zoom del diagrama'>
+              🔍-
+            </button>
+            <span style={{ color: '#fff', fontSize: 12, minWidth: '40px', textAlign: 'center' }} title='Zoom actual'>
+              {Math.round(zoom * 100)}%
+            </span>
+            <button onClick={handleZoomIn} style={{ ...groupBtn, background: '#546e7a', color: '#fff' }} title='Acercar: aumenta el zoom del diagrama'>
+              🔍+
+            </button>
+            <button onClick={handleResetZoom} style={{ ...groupBtn, background: '#546e7a', color: '#fff' }} title='Restablecer zoom: vuelve al 100%'>
+              🎯
+            </button>
+            <button onClick={handleFitAll} style={{ ...groupBtn, background: '#546e7a', color: '#fff' }} title='Ajustar a pantalla: muestra todas las clases a la vez'>
+              📐
+            </button>
+          </div>
+
+          {/* Acción destructiva, separada del resto */}
           <button
-            onClick={handleImportImage}
-            style={{
-              ...buttonStyle,
-              background: importing || isLocked() ? '#ccc' : '#8e24aa',
-              color: '#fff',
-              opacity: importing || isLocked() ? 0.7 : 1,
-              cursor: importing || isLocked() ? 'not-allowed' : 'pointer',
-            }}
-            disabled={importing || isLocked()}
-            title='Importar diagrama desde imagen'
+            onClick={handleClearBoard}
+            style={{ ...groupBtn, background: '#c62828', color: '#fff' }}
+            title='Limpiar pizarra: elimina TODAS las clases y relaciones del diagrama'
           >
-            {importing ? '⏳ Importando...' : '📸 Importar Imagen'}
-          </button>
-          
-          <button onClick={handleImportJSON} style={{ ...buttonStyle, background: '#4caf50', color: '#fff' }}>
-            📄 Importar JSON
-          </button>
-          <button onClick={handleExportJSON} style={{ ...buttonStyle, background: '#9c27b0', color: '#fff' }}>
-            💾 Exportar JSON
-          </button>
-          <button onClick={handleClearBoard} style={{ ...buttonStyle, background: '#f44336', color: '#fff' }}>
             🗑️ Limpiar Pizarra
-          </button>
-          <button
-            onClick={handleStartManyToMany}
-            style={{
-              ...buttonStyle,
-              background: currentMode === 'manyToMany' ? '#ff9800' : '#388e3c',
-              color: '#fff',
-            }}
-            disabled={currentMode === 'relation'}
-          >
-            ⚡ Muchos a Muchos
-          </button>
-          <button onClick={handleGenerarBackend} style={{ ...buttonStyle, background: '#ff9800', color: '#fff' }}>
-            ⚙️ Backend
-          </button>
-          <button onClick={handleGenerarFrontend} style={{ ...buttonStyle, background: '#2196f3', color: '#fff' }}>
-            📱 Frontend
-          </button>
-
-          {/* Controles de zoom - sin cambios */}
-          <div style={{ width: '1px', height: '30px', background: 'rgba(255,255,255,0.3)', margin: '0 8px' }}></div>
-          <button onClick={handleZoomOut} style={{ ...buttonStyle, background: '#9c27b0', color: '#fff', minWidth: '40px', padding: '10px' }}>
-            🔍-
-          </button>
-          <span style={{ color: '#fff', fontSize: 12, minWidth: '45px', textAlign: 'center' }}>
-            {Math.round(zoom * 100)}%
-          </span>
-          <button onClick={handleZoomIn} style={{ ...buttonStyle, background: '#9c27b0', color: '#fff', minWidth: '40px', padding: '10px' }}>
-            🔍+
-          </button>
-          <button onClick={handleResetZoom} style={{ ...buttonStyle, background: '#9c27b0', color: '#fff', minWidth: '50px', padding: '10px' }}>
-            🎯
-          </button>
-          <button onClick={handleFitAll} style={{ ...buttonStyle, background: '#9c27b0', color: '#fff', minWidth: '50px', padding: '10px' }}>
-            📐
           </button>
         </div>
 
@@ -1341,7 +1446,7 @@ const BoardPage = ({ mode = 'host' }: { mode?: 'host' | 'guest' }) => {
             position: 'relative',
             minWidth: '110px',
           }}
-          title='Chat del equipo con la IA desarrollador senior'
+          title='Chat IA: conversa con el equipo y la IA desarrolladora senior; todos ven las preguntas y respuestas'
         >
           💬 Chat IA{onlineCount > 0 ? ` · 👥 ${onlineCount}` : ''}
           {chatUnread > 0 && (
@@ -1377,7 +1482,7 @@ const BoardPage = ({ mode = 'host' }: { mode?: 'host' | 'guest' }) => {
             padding: '8px 12px',
             marginRight: '8px',
           }}
-          title='Cerrar sesión'
+          title='Salir: cierra tu sesión y vuelve al login'
         >
           🚪 Salir
         </button>
@@ -1405,6 +1510,10 @@ const BoardPage = ({ mode = 'host' }: { mode?: 'host' | 'guest' }) => {
       {/* Hidden inputs */}
       <input ref={jsonInputRef} type='file' accept='.json' style={{ display: 'none' }} onChange={handleJSONFileSelect} />
       <input ref={fileInputRef} type='file' accept='image/*' onChange={handleFileSelect} style={{ display: 'none' }} />
+
+      {viewMode === 'er' && (
+        <ErView nodes={nodes} edges={edges.map(convertReactFlowToUMLEdge)} top={toolbarHeight} />
+      )}
 
       {/* Canvas */}
       <div
@@ -1489,6 +1598,10 @@ const BoardPage = ({ mode = 'host' }: { mode?: 'host' | 'guest' }) => {
         onUpdateEdge={handleUpdateEdgeFromPrompt}
         onDeleteNode={removeNodeAndEdges}
         onDeleteEdge={deleteEdge}
+        onMoveNode={(id, x, y) => {
+          updateNodePosition(id, x, y);
+          debouncedSave();
+        }}
         existingNodes={nodes}
         existingEdges={edges.map(convertReactFlowToUMLEdge)}
       />

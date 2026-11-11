@@ -5,8 +5,8 @@ import type { NodeType, EdgeType } from '../utils/umlConstants';
 import { OPENAI_PROXY_URL as PROXY_URL, SUPABASE_ANON_KEY } from '../lib/supabase.config'; 
 
 export interface DiagramAction {
-  type: 'create' | 'update' | 'delete';
-  target: 'class' | 'attribute' | 'edge';
+  type: 'create' | 'update' | 'delete' | 'move' | 'arrange';
+  target: 'class' | 'attribute' | 'edge' | 'diagram';
   data: any;
 }
 
@@ -23,6 +23,8 @@ export const processUMLPrompt = async (
     id: n.id,
     nombre: n.label,
     atributos: n.attributes?.map(a => `${a.name}: ${a.datatype} (${a.scope})`) || [],
+    x: Math.round(n.x),
+    y: Math.round(n.y),
   }));
 
   const contextRelations = currentEdges.map(e => ({
@@ -62,7 +64,17 @@ TIPOS DE ACCIONES DISPONIBLES:
 7. Eliminar relación: 
    { type: 'delete', target: 'edge', data: { id?: string, sourceLabel?: string, targetLabel?: string } }
 
+8. Mover una clase a una posición (x, y en píxeles; x crece a la derecha, y crece hacia abajo; las clases miden ~200 px de ancho y ~150 px de alto):
+   { type: 'move', target: 'class', data: { id: string, label: string, x: number, y: number } }
+   También se puede mover de forma relativa con dx / dy (píxeles) en lugar de x / y:
+   { type: 'move', target: 'class', data: { id: string, label: string, dx?: number, dy?: number } }
+
+9. Ordenar / acomodar TODO el diagrama automáticamente (el cálculo de posiciones lo hace la aplicación, no tú):
+   { type: 'arrange', target: 'diagram', data: { layout: 'grid'|'row'|'column'|'circle'|'hierarchy' } }
+
 REGLAS DE INTERPRETACIÓN:
+- "mueve", "pon", "coloca", "lleva", "arrastra" + clase → acción move (usa las x,y actuales del contexto para calcular posiciones relativas: "a la derecha de X" = x de X + 300, misma y; "debajo de X" = y de X + 250, misma x)
+- "ordena", "acomoda", "organiza", "alinea" el diagrama → acción arrange (grid por defecto; "en fila/horizontal" → row; "en columna/vertical" → column; "en círculo" → circle; "jerarquía/herencia" → hierarchy)
 - "clase", "entidad", "tabla" → crear/modificar clase
 - "elimina", "borra", "quita", "remueve" + "clase" → eliminar clase
 - "atributo", "propiedad", "campo", "variable" → crear/modificar atributo
@@ -156,6 +168,15 @@ Respuesta: [{"type":"delete","target":"edge","data":{"sourceLabel":"Pedido","tar
 
 Usuario: "Cambia el nombre de Cliente a Comprador"
 Respuesta: [{"type":"update","target":"class","data":{"id":"node_cliente_id","label":"Comprador"}}]
+
+Usuario: "Mueve la clase Usuario a la derecha de Pedido"
+Respuesta: [{"type":"move","target":"class","data":{"id":"node_usuario_id","label":"Usuario","x":600,"y":100}}]
+
+Usuario: "Sube la clase Pedido 100 píxeles"
+Respuesta: [{"type":"move","target":"class","data":{"id":"node_pedido_id","label":"Pedido","dx":0,"dy":-100}}]
+
+Usuario: "Ordena todas las clases en cuadrícula"
+Respuesta: [{"type":"arrange","target":"diagram","data":{"layout":"grid"}}]
 
 Usuario: "Relación muchos a muchos entre Estudiante y Curso"
 Respuesta: [{"type":"create","target":"class","data":{"label":"Estudiante_Curso","attributes":[],"asociativa":true,"relaciona":["Estudiante","Curso"]}},{"type":"create","target":"edge","data":{"sourceLabel":"Estudiante","targetLabel":"Estudiante_Curso","tipo":"asociacion","multiplicidadOrigen":"1","multiplicidadDestino":"*"}},{"type":"create","target":"edge","data":{"sourceLabel":"Curso","targetLabel":"Estudiante_Curso","tipo":"asociacion","multiplicidadOrigen":"1","multiplicidadDestino":"*"}}]
