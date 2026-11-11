@@ -9,6 +9,7 @@ import { importDiagramFromImage } from '../services/diagramImportService';
 import { useClassStore } from '../store/classStore';
 import { generarBackend } from '../utils/backendGenerator';
 import { importFromJSON, exportToJSON } from '../utils/diagramImporter';
+import { exportToXMI, importFromXMI } from '../utils/xmiEA';
 import { generarFrontend } from '../utils/frontendGenerator';
 import type { NodeChange, EdgeChange } from 'reactflow';
 import type { NodeType, EdgeType } from '../utils/umlConstants';
@@ -251,6 +252,7 @@ const BoardPage = ({ mode = 'host' }: { mode?: 'host' | 'guest' }) => {
 
   // Estados para importación de diagramas
   const jsonInputRef = useRef<HTMLInputElement>(null);
+  const xmiInputRef = useRef<HTMLInputElement>(null);
 
   // Sistema de debounce para guardado automático
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -1013,6 +1015,37 @@ const BoardPage = ({ mode = 'host' }: { mode?: 'host' | 'guest' }) => {
     }
   };
 
+  // Enterprise Architect: exportar / importar XMI 2.1 (ver utils/xmiEA.ts)
+  const handleExportXMI = () => {
+    const name = currentBoardData?.name || 'diagrama';
+    const xmi = exportToXMI(nodes, edges.map(convertReactFlowToUMLEdge), name);
+    const url = URL.createObjectURL(new Blob([xmi], { type: 'application/xml' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${name}.xmi`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleXMIFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const { nodes: newNodes, edges: newEdges } = importFromXMI(await file.text());
+      const supabaseNodes = newNodes.map(convertUMLToSupabaseNode);
+      const supabaseEdges = newEdges.map(convertUMLToSupabaseEdge);
+      onNodesChange(supabaseNodes.map((node: any) => ({ id: node.id, type: 'add', item: node })) as any);
+      onEdgesChange(supabaseEdges.map((edge: any) => ({ id: edge.id, type: 'add', item: edge })) as any);
+      await saveDiagram();
+      alert(`✅ Importado desde Enterprise Architect: ${newNodes.length} clases y ${newEdges.length} relaciones`);
+      setTimeout(() => handleFitAll(), 100);
+    } catch (error) {
+      console.error('❌ Error importando XMI:', error);
+      alert(`❌ No se pudo importar el XMI: ${error instanceof Error ? error.message : 'error desconocido'}`);
+    }
+  };
+
   const handleClearBoard = async () => {
     const confirmed = window.confirm(
       '¿Estás seguro de que quieres limpiar toda la pizarra?\n\n' +
@@ -1363,6 +1396,26 @@ const BoardPage = ({ mode = 'host' }: { mode?: 'host' | 'guest' }) => {
             >
               💾 Exportar JSON
             </button>
+            <button
+              onClick={() => xmiInputRef.current?.click()}
+              style={{
+                ...groupBtn,
+                background: isLocked() ? '#ccc' : '#5d4037',
+                color: '#fff',
+                cursor: isLocked() ? 'not-allowed' : 'pointer',
+              }}
+              disabled={isLocked()}
+              title='Importar de Enterprise Architect: carga un archivo .xmi (en EA: Publish > Export XML > XMI 2.1)'
+            >
+              📥 Importar EA
+            </button>
+            <button
+              onClick={handleExportXMI}
+              style={{ ...groupBtn, background: '#5d4037', color: '#fff' }}
+              title='Exportar a Enterprise Architect: descarga un .xmi (en EA: Publish > Import XML > Import Package from XMI)'
+            >
+              📤 Exportar EA
+            </button>
           </div>
 
           {/* Grupo: Generar código */}
@@ -1513,6 +1566,7 @@ const BoardPage = ({ mode = 'host' }: { mode?: 'host' | 'guest' }) => {
 
       {/* Hidden inputs */}
       <input ref={jsonInputRef} type='file' accept='.json' style={{ display: 'none' }} onChange={handleJSONFileSelect} />
+      <input ref={xmiInputRef} type='file' accept='.xmi,.xml' style={{ display: 'none' }} onChange={handleXMIFileSelect} />
       <input ref={fileInputRef} type='file' accept='image/*' onChange={handleFileSelect} style={{ display: 'none' }} />
 
       {viewMode === 'er' && (
